@@ -4,6 +4,8 @@ use Laravel\Prompts\Key;
 use Laravel\Prompts\Prompt;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Process\Process;
+use Symfony\Component\Process\ExecutableFinder;
 use Venusian\Build\Build;
 use Venusian\Build\Console\BuildCommand;
 use Venusian\Build\Console\Interview;
@@ -24,21 +26,15 @@ beforeEach(function () {
     $this->root = sys_get_temp_dir().'/venusian-build-cmd-'.bin2hex(random_bytes(6));
     $files = new Filesystem;
     $files->mirror(__DIR__.'/../Fixtures/app', $this->root.'/app');
-    // The fixture lock names packages composer would fetch; this copy's lock points venusian/framework at a stub path, so the stage installs offline.
+    // The fixture lock names packages composer would fetch; this copy resolves venusian/framework to a stub path package, so the stage installs offline.
     mkdir($this->root.'/framework-stub');
     file_put_contents($this->root.'/framework-stub/composer.json', json_encode(['name' => 'venusian/framework', 'version' => '0.10.6']));
     $manifest = ['name' => 'venusian-tests/build-fixture', 'type' => 'project', 'require' => ['php' => '^8.4', 'venusian/framework' => '*'], 'autoload' => ['psr-4' => ['App\\' => 'app/']]];
+    $manifest['repositories'] = ['stub' => ['type' => 'path', 'url' => $this->root.'/framework-stub']];
     file_put_contents($this->root.'/app/composer.json', json_encode($manifest));
-    file_put_contents($this->root.'/app/composer.lock', json_encode([
-        '_readme' => [], 'content-hash' => md5('fixture'),
-        'packages' => [[
-            'name' => 'venusian/framework', 'version' => '0.10.6', 'type' => 'library',
-            'dist' => ['type' => 'path', 'url' => $this->root.'/framework-stub', 'reference' => 'stub'],
-            'transport-options' => ['relative' => false],
-        ]],
-        'packages-dev' => [], 'aliases' => [], 'minimum-stability' => 'stable', 'stability-flags' => [], 'prefer-stable' => false,
-        'prefer-lowest' => false, 'platform' => [], 'platform-dev' => [], 'plugin-api-version' => '2.6.0',
-    ]));
+    (new Process([PHP_BINARY, (new ExecutableFinder)->find('composer'), 'update', '--no-install', '--no-interaction', '--quiet'], $this->root.'/app'))->mustRun();
+    mkdir($this->root.'/app/vendor', 0777, true);
+    touch($this->root.'/app/vendor/autoload.php');
     file_put_contents($this->root.'/app/config/build.php', "<?php\n\nreturn ['extensions' => ['appkit'], 'version' => '2.0.0'];\n");
     mkdir($this->root.'/ext');
     file_put_contents($this->root.'/ext/appkit.so', 'APPKIT');

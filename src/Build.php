@@ -48,7 +48,7 @@ final class Build
     {
         $this->checkTargets($manifest);
 
-        $php = ($this->php_finder)($manifest->php)->nts();
+        $php = ($this->php_finder)($manifest->php)->nts($manifest->extensions);
         $report("Extensions from {$php['binary']} (PHP {$php['version']} NTS)");
 
         $files = new Filesystem;

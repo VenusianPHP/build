@@ -23,6 +23,11 @@ it('names each missing piece of a Venusian app', function () {
     mkdir($dir.'/bootstrap');
     touch($dir.'/bootstrap/app.php');
 
+    expect((new AppInspector($dir))->problems())->toBe(['vendor/autoload.php is missing: run composer install first']);
+
+    mkdir($dir.'/vendor');
+    touch($dir.'/vendor/autoload.php');
+
     expect((new AppInspector($dir))->problems())->toBe([]);
 
     (new Filesystem)->remove($dir);

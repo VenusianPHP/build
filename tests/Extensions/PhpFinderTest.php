@@ -31,3 +31,20 @@ it('searches php, php8.4 and php84 on PATH and skips ZTS ones', function () use 
 it('says what it looked for when nothing fits', function () use ($describe, $find) {
     (new PhpFinder(null, $describe([]), $find([])))->nts();
 })->throws(RuntimeException::class, 'php, php8.4, php84');
+
+it('prefers the NTS PHP whose extension_dir holds the app\'s extensions', function () use ($describe, $find) {
+    $dir = sys_get_temp_dir().'/venusian-finder-'.bin2hex(random_bytes(4));
+    mkdir($dir);
+    touch($dir.'/appkit.so');
+
+    $finder = new PhpFinder(null, $describe([
+        '/herd/php' => ['zts' => false, 'version' => '8.4.1', 'extension_dir' => '/herd/ext'],
+        '/brew/php84' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $dir],
+    ]), $find(['php' => '/herd/php', 'php84' => '/brew/php84']));
+
+    expect($finder->nts(['appkit', 'mbstring'])['binary'])->toBe('/brew/php84')
+        ->and($finder->nts()['binary'])->toBe('/herd/php');
+
+    unlink($dir.'/appkit.so');
+    rmdir($dir);
+});

@@ -27,6 +27,10 @@ final class AppInspector
             $problems[] = 'bootstrap/app.php is missing';
         }
 
+        if ($problems === [] && ! is_file($this->directory.'/vendor/autoload.php')) {
+            $problems[] = 'vendor/autoload.php is missing: run composer install first';
+        }
+
         return $problems;
     }
 }

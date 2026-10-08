@@ -60,6 +60,19 @@ final class PharBuilder
         }
     }
 
+    /**
+     * composer run by the PHP that runs venusian, so the platform it checks (extensions included)
+     * is the developer's own, not whichever PHP the composer script's shebang names.
+     *
+     * @return list<string>
+     */
+    private function composer(): array
+    {
+        $composer = (new ExecutableFinder)->find('composer') ?? throw new RuntimeException('composer is not on PATH');
+
+        return [$this->php_binary, $composer];
+    }
+
     private function copyApp(string $app_dir, string $stage): void
     {
         $finder = Finder::create()->in($app_dir)->ignoreDotFiles(false)->ignoreVCS(true)
@@ -79,9 +92,9 @@ final class PharBuilder
 
     private function installProductionVendor(string $stage): void
     {
-        $composer = (new ExecutableFinder)->find('composer') ?? throw new RuntimeException('composer is not on PATH');
         $process = new Process(
-            [$composer, 'install', '--no-dev', '--no-interaction', '--no-scripts', '--no-plugins', '--optimize-autoloader', '--quiet'],
+            // Platform requirements are the runtime's business: micro plus the bundled .so files, not the PHP running composer.
+            [...$this->composer(), 'install', '--no-dev', '--no-interaction', '--no-scripts', '--no-plugins', '--optimize-autoloader', '--no-progress', '--no-ansi'],
             $stage,
             ['COMPOSER_NO_INTERACTION' => '1'],
         );

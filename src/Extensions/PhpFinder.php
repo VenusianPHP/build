@@ -31,8 +31,12 @@ final class PhpFinder
         $this->find = $find ?? fn (string $name): ?string => (new ExecutableFinder)->find($name);
     }
 
-    /** @return array{binary: string, version: string, extension_dir: string} version is major.minor */
-    public function nts(): array
+    /**
+     * @param  list<string>  $extensions  names the app needs; among the NTS candidates on PATH, the one whose
+     *                                    extension_dir holds the most of them wins (Herd's php is NTS but has none)
+     * @return array{binary: string, version: string, extension_dir: string} version is major.minor
+     */
+    public function nts(array $extensions = []): array
     {
         if ($this->configured) {
             $facts = ($this->describe)($this->configured) ?? throw new RuntimeException("{$this->configured} is not a PHP binary");
@@ -44,16 +48,25 @@ final class PhpFinder
             return $this->shape($this->configured, $facts);
         }
 
+        $best = null;
+        $best_score = -1;
+
         foreach (self::CANDIDATES as $name) {
             $binary = ($this->find)($name);
             $facts = $binary ? ($this->describe)($binary) : null;
 
-            if ($facts && ! $facts['zts']) {
-                return $this->shape($binary, $facts);
+            if (! $facts || $facts['zts']) {
+                continue;
+            }
+
+            $score = count(array_filter($extensions, fn (string $extension): bool => is_file(rtrim($facts['extension_dir'], '/').'/'.strtolower($extension).'.so')));
+
+            if ($score > $best_score) {
+                [$best, $best_score] = [$this->shape($binary, $facts), $score];
             }
         }
 
-        throw new RuntimeException('No NTS PHP found on PATH (looked for '.implode(', ', self::CANDIDATES).'). Set build.php.');
+        return $best ?? throw new RuntimeException('No NTS PHP found on PATH (looked for '.implode(', ', self::CANDIDATES).'). Set build.php.');
     }
 
     /**
