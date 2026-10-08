@@ -1,0 +1,6 @@
+/tests export-ignore
+/phpunit.xml export-ignore
+/.okf export-ignore
+/AGENTS.md export-ignore
+/CLAUDE.md export-ignore
+/docs export-ignore
