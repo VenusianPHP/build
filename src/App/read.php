@@ -7,7 +7,7 @@
  * classes), exports .env into the environment so env() answers as the app
  * expects, evaluates config/build.php and config/app.php, lists the sketches
  * under app/Runner/Sketches by the name the framework's SketchRegistry would
- * give them, and prints JSON.
+ * give them, and prints JSON with the parsed .env beside them.
  */
 
 $app = rtrim((string) ($argv[1] ?? ''), '/');
@@ -85,4 +85,5 @@ echo json_encode([
     'build' => $read($app.'/config/build.php'),
     'app' => $read($app.'/config/app.php'),
     'sketches' => $sketches,
+    'dotenv' => (object) $env,
 ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);

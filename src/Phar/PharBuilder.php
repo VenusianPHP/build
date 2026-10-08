@@ -105,7 +105,7 @@ final class PharBuilder
         }
     }
 
-    /** The packaged app's .env: only what build.env names; the developer's .env never ships. */
+    /** The packaged app's .env, written from the manifest: the app's own .env file is never copied as it is. */
     private function writeEnv(string $stage, Manifest $manifest): void
     {
         if ($manifest->env === []) {

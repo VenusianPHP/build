@@ -26,6 +26,7 @@ final class ManifestReader
         'sign' => 'adhoc',
         'targets' => ['macos-arm64'],
         'env' => [],
+        'env_except' => [],
     ];
 
     public function __construct(
@@ -57,14 +58,17 @@ final class ManifestReader
             sign: (string) $build['sign'],
             targets: array_values((array) $build['targets']),
             base_path: $this->app_dir,
-            env: array_map('strval', (array) $build['env']),
+            env: array_diff_key(
+                array_map('strval', [...$config['dotenv'], ...(array) $build['env']]),
+                array_flip((array) $build['env_except']),
+            ),
         );
     }
 
     /**
-     * config/build.php, config/app.php and the sketch names, evaluated by a child PHP.
+     * config/build.php, config/app.php, the sketch names and the parsed .env, from a child PHP.
      *
-     * @return array{build: array<string, mixed>, app: array<string, mixed>, sketches: list<string>}
+     * @return array{build: array<string, mixed>, app: array<string, mixed>, sketches: list<string>, dotenv: array<string, string>}
      */
     private function evaluate(): array
     {

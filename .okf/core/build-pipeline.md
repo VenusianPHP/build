@@ -47,7 +47,7 @@ sources:
 | # | Step | Class | Pinned by |
 |---|---|---|---|
 | 1 | Refuse unless `composer.json` requires `venusian/framework`, `computer` and `bootstrap/app.php` exist | `AppInspector`[^inspector] | `AppInspectorTest`, `BuildCommandTest` refusal |
-| 2 | Manifest: `config/build.php` over defaults, `app.name`, sketches, `ext-*` from `composer.lock`; evaluated in a child PHP with `env()` reading `.env` | `ManifestReader`[^reader] | `ManifestReaderTest` |
+| 2 | Manifest: `config/build.php` over defaults, `app.name`, sketches, `ext-*` from `composer.lock`; evaluated in a child PHP with `env()` reading `.env`; packaged `.env` = the app's `.env`, `build.env` over it, less `build.env_except` | `ManifestReader`[^reader] | `ManifestReaderTest` |
 | 3 | Interview: name, bundle id, version, sketch (when several), signing; defaults stand without a terminal; several sketches and no terminal → refuse | `Interview`[^interview] | `BuildCommandTest` interview |
 | 4 | Extension source: `build.php`, else the PHP running venusian; NTS → its `extension_dir`, ZTS → the NTS directory beside it (`-zts` suffix dropped); a configured ZTS binary refused by name | `PhpFinder`[^ext] | `PhpFinderTest` |
 | 5 | Phar: stage without `vendor storage tests build .git .idea .vscode .zed bootstrap/cache node_modules .env* *.log`; `composer install --no-dev`; writable skeleton; `pack.php` with metadata `name bundle_id version sketch`; stub runs `rocket <sketch>`; symlinked path packages followed | `PharBuilder`[^phar] | `PharBuilderTest` |

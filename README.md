@@ -50,7 +50,8 @@ return [
     'repository' => 'phpacker/php-bin',
     'sign' => 'adhoc',                // or a codesign identity string
     'targets' => ['macos-arm64'],
-    'env' => [],                      // written as the packaged app's .env; the developer's .env never ships
+    'env' => [],                      // over the app's .env in the packaged app's .env
+    'env_except' => [],               // keys of the app's .env left out of the packaged app, e.g. ['DB_PASSWORD']
 ];
 ```
 
@@ -58,7 +59,7 @@ return [
 
 1. Checks the directory is a Venusian app (`composer.json` requires `venusian/framework`, `computer`, `bootstrap/app.php`).
 2. Reads the manifest: `config/build.php` over the defaults, `app.name`, sketches under `app/Runner/Sketches`, every `ext-*` in `composer.lock`.
-3. Packs `<name>.phar`: the app without `vendor`, `storage`, `tests`, caches and `.env`; `composer install --no-dev` in a stage; a `.env` from `build.env` (a packaged app has no other environment, so anything the app reads from `.env`, such as `TOOLKIT_BRIDGE`, goes here); stub runs `rocket <sketch>`.
+3. Packs `<name>.phar`: the app without `vendor`, `storage`, `tests`, caches and `.env`; `composer install --no-dev` in a stage; a `.env` of the app's `.env` with `build.env` over it and `build.env_except` left out (a packaged app has no other environment: `TOOLKIT_BRIDGE`, API keys and drivers come from here); stub runs `rocket <sketch>`.
 4. Fetches a PHP micro runtime from the latest release of `phpacker/php-bin` for the app PHP's minor version, cached under `~/.venusian/build/runtimes`.
 5. Finds a `.so` for every required extension the runtime lacks, in the extension directory of the PHP running `venusian` (its NTS twin when that PHP is ZTS), plus kqueue and pcurl when that PHP has them (the loop backend and HTTP on the loop).
 6. Writes the executable: runtime + phpmicro ini block (`extension_dir=lib`, one `extension=` line each) + phar.

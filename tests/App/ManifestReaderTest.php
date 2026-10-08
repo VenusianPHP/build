@@ -51,6 +51,20 @@ it('carries build.env for the packaged app', function () {
     expect((new ManifestReader($this->root))->read()->env)->toBe(['TOOLKIT_BRIDGE' => 'appkit']);
 });
 
+it('carries the app\'s .env, build.env over it, without the keys build.env_except names', function () {
+    file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nTOOLKIT_BRIDGE=gtk\nNASA_API_KEY=abc\n# comment\nDB_PASSWORD=\"hunter 2\"\n");
+    file_put_contents($this->root.'/config/build.php', "<?php\n\nreturn ['env' => ['TOOLKIT_BRIDGE' => 'appkit'], 'env_except' => ['DB_PASSWORD']];\n");
+
+    expect((new ManifestReader($this->root))->read()->env)->toBe(['APP_NAME' => 'Stargazer', 'TOOLKIT_BRIDGE' => 'appkit', 'NASA_API_KEY' => 'abc']);
+});
+
+it('carries the app\'s .env as it is without config/build.php', function () {
+    unlink($this->root.'/config/build.php');
+    file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nTOOLKIT_BRIDGE=appkit\n");
+
+    expect((new ManifestReader($this->root))->read()->env)->toBe(['APP_NAME' => 'Stargazer', 'TOOLKIT_BRIDGE' => 'appkit']);
+});
+
 it('leaves the sketch open when there are several', function () {
     file_put_contents($this->root.'/app/Runner/Sketches/Weather.php', "<?php\n\nnamespace App\\Runner\\Sketches;\n\nclass Weather extends Sketch {}\n");
 

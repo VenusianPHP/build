@@ -9,7 +9,7 @@ final readonly class Manifest
      * @param  list<string>  $sketches  every registered sketch name
      * @param  list<string>  $extensions  extension names the app requires
      * @param  list<string>  $targets
-     * @param  array<string, string>  $env  variables written as the packaged app's .env
+     * @param  array<string, string>  $env  the packaged app's .env: the app's .env, build.env over it, less build.env_except
      */
     public function __construct(
         public string $name,
