@@ -59,10 +59,10 @@ return [
 
 1. Checks the directory is a Venusian app (`composer.json` requires `venusian/framework`, `computer`, `bootstrap/app.php`).
 2. Reads the manifest: `config/build.php` over the defaults, `app.name`, sketches under `app/Runner/Sketches`, every `ext-*` in `composer.lock`.
-3. Packs `<name>.phar`: the app without `vendor`, `storage`, `tests`, caches and `.env`; `composer install --no-dev` in a stage; a `.env` of the app's `.env` with `build.env` over it and `build.env_except` left out (a packaged app has no other environment: `TOOLKIT_BRIDGE`, API keys and drivers come from here); stub runs `rocket <sketch>`.
+3. Packs `<name>.phar`: the app without `vendor`, `storage`, `tests`, caches and `.env`; `composer install --no-dev` in a stage; a `.env` of the app's `.env` with `build.env` over it and `build.env_except` left out (a packaged app has no other environment: `TOOLKIT_BRIDGE`, API keys and drivers come from here); stub runs `rocket <sketch>`, or, named a script inside the phar as its first argument, that script (how the framework's process pools get workers: they spawn `PHP_BINARY`, which is the app binary).
 4. Fetches a PHP micro runtime from the latest release of `phpacker/php-bin` for the app PHP's minor version, cached under `~/.venusian/build/runtimes`.
 5. Finds a `.so` for every required extension the runtime lacks, in the extension directory of the PHP running `venusian` (its NTS twin when that PHP is ZTS), plus kqueue and pcurl when that PHP has them (the loop backend and HTTP on the loop).
-6. Writes the executable: runtime + phpmicro ini block (`extension_dir=lib`, one `extension=` line each) + phar.
+6. Writes the executable: runtime + phpmicro ini block (`micro.php_binary=./<name>-bin`, `extension_dir=lib`, one `extension=` line each) + phar.
 7. Lays out `<Name>.app` with a launcher, the binary, `lib/*.so`, `Info.plist`, the icon when configured.
 8. Signs ad hoc, or with the configured identity under the hardened runtime.
 

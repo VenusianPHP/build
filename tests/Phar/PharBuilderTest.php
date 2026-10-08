@@ -56,6 +56,23 @@ it('builds a phar that runs rocket with the sketch and carries the metadata', fu
         ->and($report['autoload'])->toBeTrue();
 });
 
+it('runs a script inside itself when named as the first argument, the way php <script> would', function () {
+    file_put_contents($this->root.'/app/worker-probe.php', '<?php echo json_encode(["argv" => $argv, "server" => $_SERVER["argv"]]);');
+    $manifest = Manifest::fromJson(json_encode([
+        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
+        'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => ['macos-arm64'], 'base_path' => $this->root.'/app',
+    ]));
+    (new PharBuilder(PHP_BINARY, new Filesystem))->build($this->root.'/app', $manifest, $this->root.'/out.phar');
+    $script = 'phar://'.realpath($this->root).'/out.phar/worker-probe.php';
+
+    $run = new Process([PHP_BINARY, $this->root.'/out.phar', $script, 'autoload.php', '/base']);
+    $run->mustRun();
+    $report = json_decode($run->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+
+    expect($report['argv'])->toBe([$script, 'autoload.php', '/base'])
+        ->and($report['server'])->toBe([$script, 'autoload.php', '/base']);
+});
+
 it('writes only the env the manifest names, never the developer\'s .env', function () {
     $manifest = Manifest::fromJson(json_encode([
         'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],

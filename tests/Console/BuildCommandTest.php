@@ -81,7 +81,7 @@ it('builds a signed bundle with the runtime, the phar and the bundled extension'
 
     expect($tester->getDisplay())->toContain($app)
         ->and(str_starts_with($binary, "#!/bin/sh\n"))->toBeTrue()
-        ->and($binary)->toContain("extension_dir=lib\nextension=appkit.so\n")
+        ->and($binary)->toContain("micro.php_binary=./star-gazer-bin\nextension_dir=lib\nextension=appkit.so\n")
         ->and(file_get_contents($app.'/Contents/MacOS/lib/appkit.so'))->toBe('APPKIT')
         ->and(file_get_contents($app.'/Contents/Info.plist'))->toContain('<string>2.0.0</string>')
         ->and($this->commands)->toBe([['codesign', '--force', '--sign', '-', $app]])

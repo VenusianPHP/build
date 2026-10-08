@@ -8,7 +8,10 @@
  * symlink out of the stage) ships as files like any other.
  *
  * The stub hands rocket the sketch as its first argument, so the packaged
- * app runs that sketch; any further arguments pass through.
+ * app runs that sketch; any further arguments pass through. Named a script
+ * inside itself as the first argument, it runs that script instead, the way
+ * `php <script>` would: the framework's process pools spawn PHP_BINARY on
+ * their worker script, and in a packaged app PHP_BINARY is this binary.
  */
 
 [, $stage, $output, $metadata] = $argv;
@@ -34,8 +37,16 @@ $phar->buildFromIterator($files());
 $phar->setStub(<<<PHP
 <?php
 Phar::interceptFileFuncs();
-\$_SERVER['argv'] = ['rocket', {$sketch}, ...array_slice(\$_SERVER['argv'] ?? [], 1)];
-\$_SERVER['argc'] = count(\$_SERVER['argv']);
+\$self = ['phar://'.__FILE__.'/', 'phar://'.realpath(__FILE__).'/'];
+\$script = \$_SERVER['argv'][1] ?? '';
+if (\$script !== '' && (str_starts_with(\$script, \$self[0]) || str_starts_with(\$script, \$self[1]))) {
+    \$argv = \$_SERVER['argv'] = array_slice(\$_SERVER['argv'], 1);
+    \$argc = \$_SERVER['argc'] = count(\$argv);
+    require \$script;
+    return;
+}
+\$argv = \$_SERVER['argv'] = ['rocket', {$sketch}, ...array_slice(\$_SERVER['argv'] ?? [], 1)];
+\$argc = \$_SERVER['argc'] = count(\$argv);
 require 'phar://'.__FILE__.'/rocket';
 __HALT_COMPILER();
 PHP);

@@ -71,7 +71,7 @@ final class Build
             $this->signer->signRuntime($sfx, $manifest->sign);
 
             $binary = "{$work}/{$manifest->kebab()}-bin";
-            $this->combiner->combine($sfx, new MicroIni('lib', array_map('basename', $extensions)), $phar, $binary);
+            $this->combiner->combine($sfx, new MicroIni('lib', array_map('basename', $extensions), MicroIni::forBinary(basename($binary))), $phar, $binary);
 
             $output = rtrim($app_dir, '/').'/build';
             $files->mkdir($output);
