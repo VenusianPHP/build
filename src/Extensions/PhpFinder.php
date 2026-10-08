@@ -4,82 +4,56 @@ namespace Venusian\Build\Extensions;
 
 use Closure;
 use RuntimeException;
-use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
 
 /**
- * The NTS PHP whose extension_dir supplies the .so files the runtime loads.
+ * Where the .so files the runtime loads come from: the PHP that runs venusian.
  *
- * The installer may run under a ZTS PHP; its extensions cannot load into
- * the NTS runtime, so the source PHP is chosen on its own.
+ * The runtime is NTS. When the running PHP is NTS its extension_dir is used
+ * as it is. When it is ZTS (zhp), its extensions cannot load into the
+ * runtime, so the NTS directory beside it is used: the same path without the
+ * -zts suffix, where an NTS build of the same PHP installs its extensions.
+ * build.php names another PHP outright.
  */
 final class PhpFinder
 {
-    private const CANDIDATES = ['php', 'php8.4', 'php84'];
-
     private readonly Closure $describe;
 
-    private readonly Closure $find;
-
     /**
+     * @param  string|null  $configured  build.php, or null for the PHP running venusian
      * @param  Closure(string): (array{zts: bool, version: string, extension_dir: string}|null)|null  $describe
-     * @param  Closure(string): (string|null)|null  $find
      */
-    public function __construct(private readonly ?string $configured, ?Closure $describe = null, ?Closure $find = null)
-    {
+    public function __construct(
+        private readonly ?string $configured,
+        ?Closure $describe = null,
+        private readonly string $running = PHP_BINARY,
+    ) {
         $this->describe = $describe ?? self::describeWithProcess(...);
-        $this->find = $find ?? fn (string $name): ?string => (new ExecutableFinder)->find($name);
     }
 
-    /**
-     * @param  list<string>  $extensions  names the app needs; among the NTS candidates on PATH, the one whose
-     *                                    extension_dir holds the most of them wins (Herd's php is NTS but has none)
-     * @return array{binary: string, version: string, extension_dir: string} version is major.minor
-     */
-    public function nts(array $extensions = []): array
+    /** @return array{binary: string, version: string, extension_dir: string} version is major.minor */
+    public function nts(): array
     {
+        $binary = $this->configured ?: $this->running;
+        $facts = ($this->describe)($binary) ?? throw new RuntimeException("{$binary} is not a PHP binary");
+        $version = implode('.', array_slice(explode('.', $facts['version']), 0, 2));
+        $directory = rtrim($facts['extension_dir'], '/');
+
+        if (! $facts['zts']) {
+            return ['binary' => $binary, 'version' => $version, 'extension_dir' => $directory];
+        }
+
         if ($this->configured) {
-            $facts = ($this->describe)($this->configured) ?? throw new RuntimeException("{$this->configured} is not a PHP binary");
-
-            if ($facts['zts']) {
-                throw new RuntimeException("{$this->configured} is ZTS; the runtime is NTS, so its extensions cannot load. Set build.php to an NTS PHP.");
-            }
-
-            return $this->shape($this->configured, $facts);
+            throw new RuntimeException("{$binary} is ZTS; the runtime is NTS, so its extensions cannot load. Set build.php to an NTS PHP.");
         }
 
-        $best = null;
-        $best_score = -1;
+        $sibling = (string) preg_replace('/-zts$/', '', $directory);
 
-        foreach (self::CANDIDATES as $name) {
-            $binary = ($this->find)($name);
-            $facts = $binary ? ($this->describe)($binary) : null;
-
-            if (! $facts || $facts['zts']) {
-                continue;
-            }
-
-            $score = count(array_filter($extensions, fn (string $extension): bool => is_file(rtrim($facts['extension_dir'], '/').'/'.strtolower($extension).'.so')));
-
-            if ($score > $best_score) {
-                [$best, $best_score] = [$this->shape($binary, $facts), $score];
-            }
+        if ($sibling === $directory || ! is_dir($sibling)) {
+            throw new RuntimeException("{$binary} is ZTS and has no NTS extension directory beside {$directory}. Install the extensions into an NTS PHP {$version} and set build.php to it.");
         }
 
-        return $best ?? throw new RuntimeException('No NTS PHP found on PATH (looked for '.implode(', ', self::CANDIDATES).'). Set build.php.');
-    }
-
-    /**
-     * @param  array{zts: bool, version: string, extension_dir: string}  $facts
-     * @return array{binary: string, version: string, extension_dir: string}
-     */
-    private function shape(string $binary, array $facts): array
-    {
-        return [
-            'binary' => $binary,
-            'version' => implode('.', array_slice(explode('.', $facts['version']), 0, 2)),
-            'extension_dir' => $facts['extension_dir'],
-        ];
+        return ['binary' => $binary, 'version' => $version, 'extension_dir' => $sibling];
     }
 
     /** @return array{zts: bool, version: string, extension_dir: string}|null */

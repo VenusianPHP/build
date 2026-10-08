@@ -44,7 +44,6 @@ beforeEach(function () {
         $this->commands[] = $command;
     };
     $describe = fn (string $binary): ?array => $binary === '/fake/php' ? ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $this->root.'/ext'] : null;
-    $find = fn (string $name): ?string => $name === 'php' ? '/fake/php' : null;
 
     $this->build = new Build(
         new RuntimeStore($this->root.'/runtimes', new FakeReleases, new MicroCombiner),
@@ -52,7 +51,7 @@ beforeEach(function () {
         new MicroCombiner,
         new MacAppBundle($files, $run),
         new CodeSigner($run),
-        fn (?string $configured): PhpFinder => new PhpFinder($configured, $describe, $find),
+        fn (?string $configured): PhpFinder => new PhpFinder($configured, $describe, '/fake/php'),
         'Darwin',
     );
 });

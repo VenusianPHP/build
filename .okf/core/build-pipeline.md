@@ -49,13 +49,13 @@ sources:
 | 1 | Refuse unless `composer.json` requires `venusian/framework`, `computer` and `bootstrap/app.php` exist | `AppInspector`[^inspector] | `AppInspectorTest`, `BuildCommandTest` refusal |
 | 2 | Manifest: `config/build.php` over defaults, `app.name`, sketches, `ext-*` from `composer.lock`; evaluated in a child PHP with `env()` reading `.env` | `ManifestReader`[^reader] | `ManifestReaderTest` |
 | 3 | Interview: name, bundle id, version, sketch (when several), signing; defaults stand without a terminal; several sketches and no terminal → refuse | `Interview`[^interview] | `BuildCommandTest` interview |
-| 4 | NTS PHP: `build.php`, else `php`, `php8.4`, `php84`; ZTS refused by name | `PhpFinder`[^ext] | `PhpFinderTest` |
+| 4 | Extension source: `build.php`, else the PHP running venusian; NTS → its `extension_dir`, ZTS → the NTS directory beside it (`-zts` suffix dropped); a configured ZTS binary refused by name | `PhpFinder`[^ext] | `PhpFinderTest` |
 | 5 | Phar: stage without `vendor storage tests build .git .idea .vscode .zed bootstrap/cache node_modules .env* *.log`; `composer install --no-dev`; writable skeleton; `pack.php` with metadata `name bundle_id version sketch`; stub runs `rocket <sketch>`; symlinked path packages followed | `PharBuilder`[^phar] | `PharBuilderTest` |
 | 6 | Runtime: latest release of `repository`, nested `bin/<os>/<arch>/php-<minor>.zip` → `micro.sfx`, cached under `~/.venusian/build/runtimes`, built-ins probed once | `RuntimeStore`[^runtime] | `RuntimeStoreTest` |
-| 7 | `.so` per wanted extension the runtime lacks, from the NTS PHP's `extension_dir`; missing → named | `ExtensionBundle`[^ext] | `ExtensionBundleTest` |
+| 7 | `.so` per wanted extension the runtime lacks, plus kqueue and pcurl when present, from step 4's directory; a missing required one → named | `ExtensionBundle`[^ext] | `ExtensionBundleTest` |
 | 8 | Executable = sfx + `\xfd\xf6\x69\xe6` + `pack('N', len)` + ini + phar; ini has `extension_dir=lib` and one `extension=` per file | `MicroCombiner`[^combine] | `MicroCombinerTest` |
 | 9 | `<Name>.app/Contents/{Info.plist, MacOS/<kebab>, MacOS/<kebab>-bin, MacOS/lib/*.so, Resources/AppIcon.icns}`; launcher `cd`s to its directory then `exec`s | `MacAppBundle`[^bundle] | `MacAppBundleTest` |
-| 10 | `codesign --force --deep --sign -` (adhoc) or `--options runtime --entitlements … --sign <identity>` | `CodeSigner`[^bundle] | `MacAppBundleTest` signs |
+| 10 | `codesign --force --sign -` on the bundle (adhoc), or with an identity: the runtime image before the payload is appended, each `.so`, then the bundle under `--options runtime --entitlements …`; never `--deep` | `CodeSigner`[^bundle] | `MacAppBundleTest` signs |
 
 Output: `<app>/build/<Name>.app`, `build/.gitignore` = `*`. Targets other than `macos-arm64`, or a non-Darwin host, refuse before anything runs.[^build][^cmd-test]
 

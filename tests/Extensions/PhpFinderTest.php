@@ -3,48 +3,53 @@
 use Venusian\Build\Extensions\PhpFinder;
 
 /*
- * The runtime is NTS, so the .so files must come from an NTS PHP of the
- * same minor. The finder takes the configured binary or searches PATH.
+ * The .so files come from the PHP that runs venusian. The runtime is NTS:
+ * an NTS PHP gives its own extension_dir, a ZTS one the NTS directory
+ * beside it. build.php names another PHP outright.
  */
 $describe = fn (array $machines) => fn (string $binary): ?array => $machines[$binary] ?? null;
-$find = fn (array $path) => fn (string $name): ?string => $path[$name] ?? null;
 
-it('takes the configured binary when it is NTS', function () use ($describe, $find) {
-    $finder = new PhpFinder('/opt/php84/bin/php', $describe(['/opt/php84/bin/php' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => '/opt/ext']]), $find([]));
+beforeEach(function () {
+    $this->root = sys_get_temp_dir().'/venusian-finder-'.bin2hex(random_bytes(4));
+    mkdir($this->root.'/pecl/20240924-zts', 0777, true);
+    mkdir($this->root.'/pecl/20240924', 0777, true);
+});
+
+afterEach(function () {
+    (new Symfony\Component\Filesystem\Filesystem)->remove($this->root);
+});
+
+it('takes the extension_dir of an NTS PHP running venusian', function () use ($describe) {
+    $finder = new PhpFinder(null, $describe(['/opt/php84/bin/php' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => '/opt/ext/']]), '/opt/php84/bin/php');
 
     expect($finder->nts())->toBe(['binary' => '/opt/php84/bin/php', 'version' => '8.4', 'extension_dir' => '/opt/ext']);
 });
 
-it('refuses a configured ZTS binary by name', function () use ($describe, $find) {
-    (new PhpFinder('/opt/zts/php', $describe(['/opt/zts/php' => ['zts' => true, 'version' => '8.4.25', 'extension_dir' => '/z']]), $find([])))->nts();
+it('takes the NTS directory beside the extension_dir of a ZTS PHP running venusian', function () use ($describe) {
+    $finder = new PhpFinder(null, $describe(['/opt/zts/php' => ['zts' => true, 'version' => '8.4.25', 'extension_dir' => $this->root.'/pecl/20240924-zts']]), '/opt/zts/php');
+
+    expect($finder->nts())->toBe(['binary' => '/opt/zts/php', 'version' => '8.4', 'extension_dir' => $this->root.'/pecl/20240924']);
+});
+
+it('names the missing NTS directory beside a ZTS PHP', function () use ($describe) {
+    rmdir($this->root.'/pecl/20240924');
+
+    (new PhpFinder(null, $describe(['/opt/zts/php' => ['zts' => true, 'version' => '8.4.25', 'extension_dir' => $this->root.'/pecl/20240924-zts']]), '/opt/zts/php'))->nts();
+})->throws(RuntimeException::class, 'no NTS extension directory beside');
+
+it('takes the configured binary when it is NTS, over the running PHP', function () use ($describe) {
+    $finder = new PhpFinder('/opt/php84/bin/php', $describe([
+        '/opt/php84/bin/php' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => '/opt/ext'],
+        '/opt/zts/php' => ['zts' => true, 'version' => '8.4.25', 'extension_dir' => '/z'],
+    ]), '/opt/zts/php');
+
+    expect($finder->nts()['binary'])->toBe('/opt/php84/bin/php');
+});
+
+it('refuses a configured ZTS binary by name', function () use ($describe) {
+    (new PhpFinder('/opt/zts/php', $describe(['/opt/zts/php' => ['zts' => true, 'version' => '8.4.25', 'extension_dir' => '/z']]), '/opt/zts/php'))->nts();
 })->throws(RuntimeException::class, '/opt/zts/php is ZTS');
 
-it('searches php, php8.4 and php84 on PATH and skips ZTS ones', function () use ($describe, $find) {
-    $finder = new PhpFinder(null, $describe([
-        '/herd/php' => ['zts' => true, 'version' => '8.4.1', 'extension_dir' => '/h'],
-        '/brew/php84' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => '/b'],
-    ]), $find(['php' => '/herd/php', 'php84' => '/brew/php84']));
-
-    expect($finder->nts()['binary'])->toBe('/brew/php84');
-});
-
-it('says what it looked for when nothing fits', function () use ($describe, $find) {
-    (new PhpFinder(null, $describe([]), $find([])))->nts();
-})->throws(RuntimeException::class, 'php, php8.4, php84');
-
-it('prefers the NTS PHP whose extension_dir holds the app\'s extensions', function () use ($describe, $find) {
-    $dir = sys_get_temp_dir().'/venusian-finder-'.bin2hex(random_bytes(4));
-    mkdir($dir);
-    touch($dir.'/appkit.so');
-
-    $finder = new PhpFinder(null, $describe([
-        '/herd/php' => ['zts' => false, 'version' => '8.4.1', 'extension_dir' => '/herd/ext'],
-        '/brew/php84' => ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $dir],
-    ]), $find(['php' => '/herd/php', 'php84' => '/brew/php84']));
-
-    expect($finder->nts(['appkit', 'mbstring'])['binary'])->toBe('/brew/php84')
-        ->and($finder->nts()['binary'])->toBe('/herd/php');
-
-    unlink($dir.'/appkit.so');
-    rmdir($dir);
-});
+it('says when the binary is not a PHP', function () use ($describe) {
+    (new PhpFinder(null, $describe([]), '/not/php'))->nts();
+})->throws(RuntimeException::class, '/not/php is not a PHP binary');

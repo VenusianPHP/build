@@ -48,8 +48,8 @@ final class Build
     {
         $this->checkTargets($manifest);
 
-        $php = ($this->php_finder)($manifest->php)->nts($manifest->extensions);
-        $report("Extensions from {$php['binary']} (PHP {$php['version']} NTS)");
+        $php = ($this->php_finder)($manifest->php)->nts();
+        $report("Extensions from {$php['extension_dir']} (PHP {$php['version']})");
 
         $files = new Filesystem;
         $work = sys_get_temp_dir().'/venusian-build-'.bin2hex(random_bytes(6));
