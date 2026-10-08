@@ -1,0 +1,34 @@
+{
+    "name": "venusian/build",
+    "description": "Compiles a Venusian app into a native executable. Installed by venusian install:sdk.",
+    "type": "venusian-tool",
+    "keywords": ["venusian", "build", "phpmicro", "installer"],
+    "version": "0.10.0",
+    "license": "MIT",
+    "authors": [{"name": "Angel Gonzalez"}],
+    "require": {
+        "php": "^8.4|^8.5|^8.6",
+        "ext-phar": "*",
+        "ext-zip": "*",
+        "laravel/prompts": "^0.3.19",
+        "symfony/console": "^7.4|^8.0",
+        "symfony/filesystem": "^7.0|^8.0",
+        "symfony/finder": "^7.0|^8.0",
+        "symfony/process": "^7.0|^8.0"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "pestphp/pest": "^4"
+    },
+    "autoload": {"psr-4": {"Venusian\\Build\\": "src/"}},
+    "autoload-dev": {"psr-4": {"Venusian\\Build\\Tests\\": "tests/"}},
+    "extra": {
+        "venusian": {
+            "commands": ["Venusian\\Build\\Console\\BuildCommand"]
+        }
+    },
+    "scripts": {"test": ["@php vendor/bin/pest"]},
+    "config": {"sort-packages": true, "allow-plugins": {"pestphp/pest-plugin": true}},
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

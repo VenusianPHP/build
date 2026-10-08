@@ -1,0 +1,9 @@
+{
+    "_readme": [], "content-hash": "fixture",
+    "packages": [
+        {"name": "jovian/venusian-appkit", "version": "0.10.0", "require": {"php": "^8.4", "ext-appkit": "*"}},
+        {"name": "venusian/framework", "version": "0.10.6", "require": {"ext-mbstring": "*", "ext-ctype": "*"}}
+    ],
+    "packages-dev": [], "aliases": [], "minimum-stability": "stable", "stability-flags": [],
+    "prefer-stable": false, "prefer-lowest": false, "platform": [], "platform-dev": [], "plugin-api-version": "2.6.0"
+}

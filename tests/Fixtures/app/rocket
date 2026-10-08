@@ -1,0 +1,3 @@
+<?php
+require __DIR__.'/vendor/autoload.php';
+echo json_encode(['argv' => $_SERVER['argv'], 'dir' => __DIR__, 'autoload' => class_exists(App\Runner\Sketches\Stargazer::class)]);
