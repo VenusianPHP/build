@@ -4,7 +4,6 @@ namespace Venusian\Build\Runtime;
 
 use RuntimeException;
 use Symfony\Component\Filesystem\Filesystem;
-use Symfony\Component\Process\Process;
 use ZipArchive;
 
 /**
@@ -36,7 +35,7 @@ final class RuntimeStore
         }
 
         if (! is_file("{$dir}/extensions.json")) {
-            file_put_contents("{$dir}/extensions.json", json_encode($this->probe($sfx, $dir), JSON_THROW_ON_ERROR));
+            file_put_contents("{$dir}/extensions.json", json_encode((new RuntimeProbe($this->combiner))->extensions($sfx, $dir), JSON_THROW_ON_ERROR));
         }
 
         $extensions = json_decode((string) file_get_contents("{$dir}/extensions.json"), true, flags: JSON_THROW_ON_ERROR);
@@ -83,22 +82,5 @@ final class RuntimeStore
         $zip->close();
 
         return $content === false ? null : $content;
-    }
-
-    /** @return list<string> */
-    private function probe(string $sfx, string $dir): array
-    {
-        file_put_contents("{$dir}/probe.php", '<?php echo json_encode(get_loaded_extensions());');
-        $this->combiner->combine($sfx, new MicroIni('.', [], []), "{$dir}/probe.php", "{$dir}/probe");
-
-        try {
-            $process = new Process(["{$dir}/probe"], $dir);
-            $process->mustRun();
-        } finally {
-            unlink("{$dir}/probe.php");
-            unlink("{$dir}/probe");
-        }
-
-        return array_values(json_decode(trim($process->getOutput()), true, flags: JSON_THROW_ON_ERROR));
     }
 }

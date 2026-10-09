@@ -34,6 +34,24 @@ class GitHubReleases
         throw new RuntimeException("No zip asset or zipball on the latest release of {$repository}");
     }
 
+    /**
+     * The latest tag and the uploaded asset with exactly this name.
+     *
+     * @return array{tag: string, asset: string}
+     */
+    public function latestAsset(string $repository, string $name): array
+    {
+        $release = json_decode($this->get("https://api.github.com/repos/{$repository}/releases/latest"), true, flags: JSON_THROW_ON_ERROR);
+
+        foreach ($release['assets'] ?? [] as $asset) {
+            if ($asset['name'] === $name) {
+                return ['tag' => (string) $release['tag_name'], 'asset' => (string) $asset['browser_download_url']];
+            }
+        }
+
+        throw new RuntimeException("The latest release of {$repository} ({$release['tag_name']}) has no {$name}");
+    }
+
     public function download(string $url, string $path): void
     {
         $in = fopen($url, 'rb', false, $this->context()) ?: throw new RuntimeException("Cannot download {$url}");

@@ -34,7 +34,7 @@ it('names each missing piece of a Venusian app', function () {
 });
 
 it('reads a manifest and overrides fields', function () {
-    $manifest = Manifest::fromJson('{"name":"Stargazer","bundle_id":"com.venusian.stargazer","version":"0.1.0","sketch":null,"sketches":["stargazer"],"icon":null,"extensions":["appkit"],"php":null,"repository":"phpacker/php-bin","sign":"adhoc","targets":["macos-arm64"],"base_path":"/app"}');
+    $manifest = Manifest::fromJson('{"name":"Stargazer","id":"com.venusian.stargazer","version":"0.1.0","sketch":null,"sketches":["stargazer"],"icon":null,"extensions":["appkit"],"php":null,"repository":"phpacker/php-bin","sign":"adhoc","targets":["macos-arm64"],"base_path":"/app"}');
 
     expect($manifest->sketch)->toBeNull()
         ->and($manifest->with(['sketch' => 'stargazer', 'version' => '1.0.0'])->sketch)->toBe('stargazer')
@@ -44,7 +44,7 @@ it('reads a manifest and overrides fields', function () {
 });
 
 it('kebabs the name for file names', function () {
-    $manifest = Manifest::fromJson('{"name":"Star  Gazer 2!","bundle_id":"x","version":"1","sketch":"s","sketches":[],"icon":null,"extensions":[],"php":null,"repository":"r","sign":"adhoc","targets":[],"base_path":"/app"}');
+    $manifest = Manifest::fromJson('{"name":"Star  Gazer 2!","id":"x","version":"1","sketch":"s","sketches":[],"icon":null,"extensions":[],"php":null,"repository":"r","sign":"adhoc","targets":[],"base_path":"/app"}');
 
     expect($manifest->kebab())->toBe('star-gazer-2');
 });

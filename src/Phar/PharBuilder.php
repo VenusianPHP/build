@@ -46,7 +46,7 @@ final class PharBuilder
 
             $process = new Process([$this->php_binary, '-d', 'phar.readonly=0', __DIR__.'/pack.php', $stage, $output, json_encode([
                 'name' => $manifest->name,
-                'bundle_id' => $manifest->bundle_id,
+                'id' => $manifest->id,
                 'version' => $manifest->version,
                 'sketch' => $manifest->sketch,
             ], JSON_THROW_ON_ERROR)]);

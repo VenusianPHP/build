@@ -30,14 +30,14 @@ afterEach(function () {
 
 it('builds a phar that runs rocket with the sketch and carries the metadata', function () {
     $manifest = Manifest::fromJson(json_encode([
-        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
+        'name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
         'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => ['macos-arm64'], 'base_path' => $this->root.'/app',
     ]));
 
     (new PharBuilder(PHP_BINARY, new Filesystem))->build($this->root.'/app', $manifest, $this->root.'/out.phar');
 
     $phar = new Phar($this->root.'/out.phar');
-    expect($phar->getMetadata())->toBe(['name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer'])
+    expect($phar->getMetadata())->toBe(['name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer'])
         ->and(isset($phar['.env']))->toBeFalse()
         ->and(isset($phar['vendor/dev-only/leftover.php']))->toBeFalse()
         ->and(isset($phar['bootstrap/cache/packages.php']))->toBeFalse()
@@ -45,7 +45,7 @@ it('builds a phar that runs rocket with the sketch and carries the metadata', fu
         ->and(isset($phar['database/database.sqlite']))->toBeTrue()
         ->and(isset($phar['storage/logs/.gitignore']))->toBeTrue()
         ->and(isset($phar['storage/framework/cache/data/.gitignore']))->toBeTrue()
-        ->and(isset($phar['config/build.php']))->toBeTrue();
+        ->and(isset($phar['build.json']))->toBeTrue();
 
     $run = new Process([PHP_BINARY, $this->root.'/out.phar', '--flag']);
     $run->mustRun();
@@ -59,7 +59,7 @@ it('builds a phar that runs rocket with the sketch and carries the metadata', fu
 it('runs a script inside itself when named as the first argument, the way php <script> would', function () {
     file_put_contents($this->root.'/app/worker-probe.php', '<?php echo json_encode(["argv" => $argv, "server" => $_SERVER["argv"]]);');
     $manifest = Manifest::fromJson(json_encode([
-        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
+        'name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
         'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => ['macos-arm64'], 'base_path' => $this->root.'/app',
     ]));
     (new PharBuilder(PHP_BINARY, new Filesystem))->build($this->root.'/app', $manifest, $this->root.'/out.phar');
@@ -75,7 +75,7 @@ it('runs a script inside itself when named as the first argument, the way php <s
 
 it('writes only the env the manifest names, never the developer\'s .env', function () {
     $manifest = Manifest::fromJson(json_encode([
-        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
+        'name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
         'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => ['macos-arm64'], 'base_path' => $this->root.'/app',
         'env' => ['TOOLKIT_BRIDGE' => 'appkit', 'APP_NAME' => 'Star Gazer'],
     ]));
@@ -88,7 +88,7 @@ it('writes only the env the manifest names, never the developer\'s .env', functi
 it('fails with composer\'s own message when the lock lacks a required package', function () {
     file_put_contents($this->root.'/app/composer.json', json_encode(['name' => 'venusian-tests/build-fixture', 'type' => 'project', 'require' => ['php' => '^8.4', 'venusian-tests/absent' => '*'], 'autoload' => ['psr-4' => ['App\\' => 'app/']]]));
     $manifest = Manifest::fromJson(json_encode([
-        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
+        'name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
         'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => ['macos-arm64'], 'base_path' => $this->root.'/app',
     ]));
 
@@ -97,7 +97,7 @@ it('fails with composer\'s own message when the lock lacks a required package', 
 
 it('refuses a manifest without a sketch', function () {
     $manifest = Manifest::fromJson(json_encode([
-        'name' => 'Probe', 'bundle_id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => null, 'sketches' => ['a', 'b'],
+        'name' => 'Probe', 'id' => 'com.test.probe', 'version' => '1.2.3', 'sketch' => null, 'sketches' => ['a', 'b'],
         'icon' => null, 'extensions' => [], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc', 'targets' => [], 'base_path' => $this->root.'/app',
     ]));
 

@@ -4,9 +4,9 @@ use Symfony\Component\Filesystem\Filesystem;
 use Venusian\Build\App\ManifestReader;
 
 /*
- * The manifest comes from the app's own files: config/build.php over the
- * defaults, app.name from config/app.php, sketches from the class files,
- * extensions from composer.lock. No framework boot, no computer command.
+ * The manifest comes from the app's own files: build.json over the
+ * defaults, app.name and app.id from config/app.php, sketches from the class
+ * files, extensions from composer.lock. No framework boot, no computer command.
  */
 beforeEach(function () {
     $this->root = sys_get_temp_dir().'/venusian-manifest-'.bin2hex(random_bytes(4));
@@ -17,65 +17,76 @@ afterEach(function () {
     (new Filesystem)->remove($this->root);
 });
 
-it('reads name, version, sketch, extensions and derives the bundle id', function () {
+it('reads name, id, version, sketch and extensions', function () {
     $manifest = (new ManifestReader($this->root))->read();
 
     expect($manifest->name)->toBe('Star Gazer')
-        ->and($manifest->bundle_id)->toBe('com.venusian.star-gazer')
+        ->and($manifest->id)->toBe('com.venusian.app')
         ->and($manifest->version)->toBe('2.0.0')
         ->and($manifest->sketch)->toBe('stargazer')
         ->and($manifest->sketches)->toBe(['stargazer'])
         ->and($manifest->extensions)->toBe(['appkit', 'ctype', 'imgdec', 'mbstring'])
         ->and($manifest->repository)->toBe('phpacker/php-bin')
         ->and($manifest->sign)->toBe('adhoc')
-        ->and($manifest->targets)->toBe(['macos-arm64'])
+        ->and($manifest->targets)->toBe([])
+        ->and($manifest->windowed)->toBeTrue()
         ->and($manifest->base_path)->toBe($this->root);
 });
 
-it('falls back to every default without config/build.php, and takes APP_NAME from .env', function () {
-    unlink($this->root.'/config/build.php');
-    file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nAPP_ENV=local\n");
+it('falls back to every default without build.json, and takes APP_NAME and APP_ID from .env', function () {
+    unlink($this->root.'/build.json');
+    file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nAPP_ID=com.venusian.stargazer\nAPP_ENV=local\n");
 
     $manifest = (new ManifestReader($this->root))->read();
 
     expect($manifest->name)->toBe('Stargazer')
+        ->and($manifest->id)->toBe('com.venusian.stargazer')
         ->and($manifest->version)->toBe('0.1.0')
         ->and($manifest->extensions)->toBe(['appkit', 'ctype', 'mbstring'])
         ->and($manifest->icon)->toBeNull()
-        ->and($manifest->php)->toBeNull();
+        ->and($manifest->category)->toBe('Utility');
 });
 
-it('carries build.env for the packaged app', function () {
-    file_put_contents($this->root.'/config/build.php', "<?php\n\nreturn ['env' => ['TOOLKIT_BRIDGE' => 'appkit']];\n");
+it('takes a build.json id that matches app.id', function () {
+    file_put_contents($this->root.'/.env', "APP_ID=com.venusian.stargazer\n");
+    file_put_contents($this->root.'/build.json', '{"id": "com.venusian.stargazer"}');
 
-    expect((new ManifestReader($this->root))->read()->env)->toBe(['TOOLKIT_BRIDGE' => 'appkit']);
+    expect((new ManifestReader($this->root))->read()->id)->toBe('com.venusian.stargazer');
 });
 
-it('carries the app\'s .env, build.env over it, without the keys build.env_except names', function () {
+it('throws when build.json and app.id disagree, in the words agreed', function () {
+    file_put_contents($this->root.'/.env', "APP_ID=com.venusian.stargazer\n");
+    file_put_contents($this->root.'/build.json', '{"id": "org.example.other"}');
+
+    (new ManifestReader($this->root))->read();
+})->throws(RuntimeException::class, "build.json names org.example.other but config/app.php resolves app.id to com.venusian.stargazer; make them match, the toolkit engines get pissy when app ids don't match.");
+
+it('tells an app without app.id to add the key', function () {
+    file_put_contents($this->root.'/config/app.php', "<?php\n\nreturn ['name' => env('APP_NAME', 'Star Gazer')];\n");
+
+    (new ManifestReader($this->root))->read();
+})->throws(RuntimeException::class, "config/app.php has no app.id; add 'id' => env('APP_ID', 'com.venusian.app') under name (framework 0.10 ships it).");
+
+it('carries the app\'s .env, build.env over it, without env_except keys, and APP_ID always', function () {
     file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nTOOLKIT_BRIDGE=gtk\nNASA_API_KEY=abc\n# comment\nDB_PASSWORD=\"hunter 2\"\n");
-    file_put_contents($this->root.'/config/build.php', "<?php\n\nreturn ['env' => ['TOOLKIT_BRIDGE' => 'appkit'], 'env_except' => ['DB_PASSWORD']];\n");
+    file_put_contents($this->root.'/build.json', '{"env": {"TOOLKIT_BRIDGE": "appkit"}, "env_except": ["DB_PASSWORD", "APP_ID"]}');
 
-    expect((new ManifestReader($this->root))->read()->env)->toBe(['APP_NAME' => 'Stargazer', 'TOOLKIT_BRIDGE' => 'appkit', 'NASA_API_KEY' => 'abc']);
+    expect((new ManifestReader($this->root))->read()->env)->toBe(['APP_NAME' => 'Stargazer', 'TOOLKIT_BRIDGE' => 'appkit', 'NASA_API_KEY' => 'abc', 'APP_ID' => 'com.venusian.app']);
 });
 
-it('carries the app\'s .env as it is without config/build.php', function () {
-    unlink($this->root.'/config/build.php');
-    file_put_contents($this->root.'/.env', "APP_NAME=Stargazer\nTOOLKIT_BRIDGE=appkit\n");
+it('is not windowed without a jovian package in the lock', function () {
+    $lock = json_decode(file_get_contents($this->root.'/composer.lock'), true);
+    $lock['packages'] = array_values(array_filter($lock['packages'], fn (array $p): bool => ! str_starts_with($p['name'], 'jovian/')));
+    file_put_contents($this->root.'/composer.lock', json_encode($lock));
 
-    expect((new ManifestReader($this->root))->read()->env)->toBe(['APP_NAME' => 'Stargazer', 'TOOLKIT_BRIDGE' => 'appkit']);
+    expect((new ManifestReader($this->root))->read()->windowed)->toBeFalse();
 });
 
-it('leaves the sketch open when there are several', function () {
-    file_put_contents($this->root.'/app/Runner/Sketches/Weather.php', "<?php\n\nnamespace App\\Runner\\Sketches;\n\nclass Weather extends Sketch {}\n");
+it('carries summary, description, author, homepage, license, category and zts from build.json', function () {
+    file_put_contents($this->root.'/build.json', json_encode(['summary' => 'Sky', 'description' => "A\n\nB", 'author' => 'A <a@b.c>', 'homepage' => 'https://x', 'license' => 'MIT', 'category' => 'Education', 'zts' => true]));
 
     $manifest = (new ManifestReader($this->root))->read();
 
-    expect($manifest->sketch)->toBeNull()
-        ->and($manifest->sketches)->toBe(['stargazer', 'weather']);
-});
-
-it('honours a sketch name set with the attribute', function () {
-    file_put_contents($this->root.'/app/Runner/Sketches/Stargazer.php', "<?php\n\nnamespace App\\Runner\\Sketches;\n\nuse Voyager\\Sketches\\Attributes\\Sketch as SketchName;\n\n#[SketchName(name: 'sky')]\nclass Stargazer extends Sketch {}\n");
-
-    expect((new ManifestReader($this->root))->read()->sketches)->toBe(['sky']);
+    expect([$manifest->summary, $manifest->description, $manifest->author, $manifest->homepage, $manifest->license, $manifest->category, $manifest->zts])
+        ->toBe(['Sky', "A\n\nB", 'A <a@b.c>', 'https://x', 'MIT', 'Education', true]);
 });

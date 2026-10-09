@@ -6,99 +6,112 @@ use Closure;
 use RuntimeException;
 use Symfony\Component\Filesystem\Filesystem;
 use Venusian\Build\App\Manifest;
-use Venusian\Build\Extensions\ExtensionBundle;
-use Venusian\Build\Extensions\PhpFinder;
 use Venusian\Build\Phar\PharBuilder;
-use Venusian\Build\Runtime\MicroCombiner;
-use Venusian\Build\Runtime\MicroIni;
-use Venusian\Build\Runtime\RuntimeStore;
-use Venusian\Build\Targets\CodeSigner;
-use Venusian\Build\Targets\MacAppBundle;
+use Venusian\Build\Targets\Target;
 
 /**
- * One build, in order: NTS PHP, phar, runtime, extensions, combine, bundle, sign.
+ * One build: the phar once, then every target the manifest names that this
+ * machine can build. Targets it cannot build here are reported and left to
+ * a build elsewhere.
  */
 final class Build
 {
-    /** First-party extensions a macOS app runs on when the PHP has them: the loop backend and HTTP on the loop. */
-    private const PLATFORM_EXTENSIONS = ['kqueue', 'pcurl'];
-
-    private readonly Closure $php_finder;
+    /** @var array<string, Target> name => target */
+    private readonly array $targets;
 
     /**
-     * @param  Closure(?string): PhpFinder|null  $php_finder  builds the finder for a configured binary
+     * @param  list<Target>  $targets  every target this package builds
+     * @param  string|null  $host  the target name of this machine; null derives it from the OS and CPU
      */
     public function __construct(
-        private readonly RuntimeStore $runtimes,
         private readonly PharBuilder $phars,
-        private readonly MicroCombiner $combiner,
-        private readonly MacAppBundle $bundle,
-        private readonly CodeSigner $signer,
-        ?Closure $php_finder = null,
-        private readonly string $os_family = PHP_OS_FAMILY,
+        array $targets,
+        private readonly ?string $host = null,
     ) {
-        $this->php_finder = $php_finder ?? fn (?string $configured): PhpFinder => new PhpFinder($configured);
+        $this->targets = array_combine(array_map(fn (Target $target): string => $target->name(), $targets), $targets);
+    }
+
+    /** macos-arm64, linux-arm64, linux-x86_64; other machines name themselves the same way and have no target. */
+    public static function hostName(string $os_family = PHP_OS_FAMILY, ?string $machine = null): string
+    {
+        $os = match ($os_family) {
+            'Darwin' => 'macos',
+            'Linux' => 'linux',
+            default => strtolower($os_family),
+        };
+        $arch = match ($machine = strtolower($machine ?? php_uname('m'))) {
+            'arm64', 'aarch64' => 'arm64',
+            'x86_64', 'amd64' => 'x86_64',
+            default => $machine,
+        };
+
+        return "{$os}-{$arch}";
+    }
+
+    /** @return list<Target> */
+    public function targets(Manifest $manifest): array
+    {
+        $names = $manifest->targets === [] ? [$this->host ?? self::hostName()] : $manifest->targets;
+        $known = implode(', ', array_keys($this->targets));
+
+        return array_map(
+            fn (string $name): Target => $this->targets[$name] ?? throw new RuntimeException("Target {$name} is not one venusian build knows: {$known}."),
+            $names,
+        );
+    }
+
+    public function signs(Manifest $manifest): bool
+    {
+        foreach ($this->targets($manifest) as $target) {
+            if ($target->available() && $target->signs()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
      * @param  Closure(string): void  $report  one line per step
-     * @return string path to the .app
+     * @return list<string> one path per target built
      */
-    public function run(string $app_dir, Manifest $manifest, Closure $report): string
+    public function run(string $app_dir, Manifest $manifest, Closure $report): array
     {
-        $this->checkTargets($manifest);
+        $targets = $this->targets($manifest);
+        $buildable = array_values(array_filter($targets, fn (Target $target): bool => $target->available()));
 
-        $php = ($this->php_finder)($manifest->php)->nts();
-        $report("Extensions from {$php['extension_dir']} (PHP {$php['version']})");
+        foreach ($targets as $target) {
+            if (! $target->available()) {
+                $report("Skipping {$target->name()}: {$target->unavailableReason()}");
+            }
+        }
+
+        if ($buildable === []) {
+            throw new RuntimeException('No target could be built on this machine: '.implode(', ', array_map(
+                fn (Target $target): string => "{$target->name()} ({$target->unavailableReason()})", $targets,
+            )).'.');
+        }
 
         $files = new Filesystem;
         $work = sys_get_temp_dir().'/venusian-build-'.bin2hex(random_bytes(6));
         $files->mkdir($work);
+        $output = rtrim($app_dir, '/').'/build';
+        $files->mkdir($output);
+        $files->dumpFile("{$output}/.gitignore", "*\n");
 
         try {
             $report('Packing the phar');
             $phar = "{$work}/{$manifest->kebab()}.phar";
             $this->phars->build($app_dir, $manifest, $phar);
 
-            $report("Runtime {$manifest->repository} for PHP {$php['version']}");
-            $runtime = $this->runtimes->resolve($manifest->repository, 'mac', 'arm64', $php['version']);
+            $outputs = [];
+            foreach ($buildable as $target) {
+                $outputs[] = $target->build($phar, $manifest, $output, $report);
+            }
 
-            $extensions = (new ExtensionBundle($manifest->extensions, $runtime->extensions, $php['extension_dir'], self::PLATFORM_EXTENSIONS))->files();
-            $report('Bundling '.($extensions === [] ? 'no extensions' : implode(', ', array_keys($extensions))));
-
-            $sfx = "{$work}/micro.sfx";
-            $files->copy($runtime->sfx, $sfx, true);
-            $this->signer->signRuntime($sfx, $manifest->sign);
-
-            $binary = "{$work}/{$manifest->kebab()}-bin";
-            $this->combiner->combine($sfx, new MicroIni('lib', array_map('basename', $extensions), MicroIni::forBinary(basename($binary))), $phar, $binary);
-
-            $output = rtrim($app_dir, '/').'/build';
-            $files->mkdir($output);
-            $files->dumpFile("{$output}/.gitignore", "*\n");
-
-            $report('Writing the bundle');
-            $app = $this->bundle->write($output, $manifest, $binary, $extensions);
-
-            $report($manifest->sign === 'adhoc' ? 'Signing ad hoc' : "Signing as {$manifest->sign}");
-            $this->signer->sign($app, $manifest->sign, array_map(fn (string $path): string => "{$app}/Contents/MacOS/lib/".basename($path), $extensions));
+            return $outputs;
         } finally {
             $files->remove($work);
-        }
-
-        return $app;
-    }
-
-    private function checkTargets(Manifest $manifest): void
-    {
-        foreach ($manifest->targets as $target) {
-            if ($target !== 'macos-arm64') {
-                throw new RuntimeException("Target {$target} is not built yet; macos-arm64 is the one this release builds.");
-            }
-        }
-
-        if ($this->os_family !== 'Darwin') {
-            throw new RuntimeException('macos-arm64 builds run on a Mac (codesign, sips, iconutil).');
         }
     }
 }

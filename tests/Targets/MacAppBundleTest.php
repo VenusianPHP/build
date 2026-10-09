@@ -19,7 +19,7 @@ beforeEach(function () {
     $this->run = function (array $command, ?string $cwd = null): void {
         $this->commands[] = $command;
     };
-    $this->manifest = Manifest::fromJson('{"name":"Star Gazer","bundle_id":"com.venusian.star-gazer","version":"1.2.3","sketch":"stargazer","sketches":[],"icon":null,"extensions":[],"php":null,"repository":"phpacker/php-bin","sign":"adhoc","targets":["macos-arm64"],"base_path":"/app"}');
+    $this->manifest = Manifest::fromJson('{"name":"Star Gazer","id":"com.venusian.star-gazer","version":"1.2.3","sketch":"stargazer","sketches":[],"icon":null,"extensions":[],"php":null,"repository":"phpacker/php-bin","sign":"adhoc","targets":["macos-arm64"],"base_path":"/app"}');
 });
 
 afterEach(function () {

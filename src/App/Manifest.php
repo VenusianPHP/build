@@ -2,18 +2,19 @@
 
 namespace Venusian\Build\App;
 
-/** The build's view of an app: config/build.php over defaults, plus what the tree says. */
+/** The build's view of an app: build.json over defaults, plus what the tree says. */
 final readonly class Manifest
 {
     /**
      * @param  list<string>  $sketches  every registered sketch name
      * @param  list<string>  $extensions  extension names the app requires
-     * @param  list<string>  $targets
-     * @param  array<string, string>  $env  the packaged app's .env: the app's .env, build.env over it, less build.env_except
+     * @param  list<string>  $targets  empty means the machine running the build
+     * @param  array<string, string>  $env  the packaged app's .env: the app's .env, build.env over it, less build.env_except, APP_ID always
+     * @param  bool  $windowed  the app has a toolkit (a jovian/* package), so it gets a desktop entry and icon
      */
     public function __construct(
         public string $name,
-        public string $bundle_id,
+        public string $id,
         public string $version,
         public ?string $sketch,
         public array $sketches,
@@ -25,6 +26,14 @@ final readonly class Manifest
         public array $targets,
         public string $base_path,
         public array $env = [],
+        public string $summary = '',
+        public string $description = '',
+        public string $author = '',
+        public string $homepage = '',
+        public string $license = '',
+        public string $category = 'Utility',
+        public bool $zts = false,
+        public bool $windowed = false,
     ) {}
 
     public static function fromJson(string $json): self
@@ -33,7 +42,7 @@ final readonly class Manifest
 
         return new self(
             name: (string) $data['name'],
-            bundle_id: (string) $data['bundle_id'],
+            id: (string) $data['id'],
             version: (string) $data['version'],
             sketch: $data['sketch'] ?? null,
             sketches: array_values($data['sketches'] ?? []),
@@ -42,9 +51,17 @@ final readonly class Manifest
             php: $data['php'] ?? null,
             repository: (string) ($data['repository'] ?? 'phpacker/php-bin'),
             sign: (string) ($data['sign'] ?? 'adhoc'),
-            targets: array_values($data['targets'] ?? ['macos-arm64']),
+            targets: array_values($data['targets'] ?? []),
             base_path: (string) $data['base_path'],
             env: array_map('strval', (array) ($data['env'] ?? [])),
+            summary: (string) ($data['summary'] ?? ''),
+            description: (string) ($data['description'] ?? ''),
+            author: (string) ($data['author'] ?? ''),
+            homepage: (string) ($data['homepage'] ?? ''),
+            license: (string) ($data['license'] ?? ''),
+            category: (string) ($data['category'] ?? 'Utility'),
+            zts: (bool) ($data['zts'] ?? false),
+            windowed: (bool) ($data['windowed'] ?? false),
         );
     }
 

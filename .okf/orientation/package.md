@@ -33,7 +33,7 @@ The installer's `bin/venusian` reads every installed package of type `venusian-t
 
 # Boundary
 
-The framework ships no build code. This package reads the app's files itself (`config/build.php`, `config/app.php`, `app/Runner/Sketches`, `composer.lock`) and packs the phar in a child PHP. The framework's only part is packaged mode: where a phar-based app writes.[^command]
+The framework ships no build code. This package reads the app's files itself (`build.json`, `config/app.php`, `app/Runner/Sketches`, `composer.lock`) and packs the phar in a child PHP. The framework's only part is packaged mode: where a phar-based app writes.[^command]
 
 [^composer]: name, type, extra.venusian.commands
 [^command]: BuildCommand

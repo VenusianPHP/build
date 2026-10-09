@@ -8,27 +8,14 @@ use Symfony\Component\Process\Process;
 /**
  * Reads the manifest from the app's own files, without booting the framework.
  *
- * config/build.php and config/app.php are plain `return [...]` files that
- * call env(); a child PHP evaluates them with env() answering from .env
- * and the environment, so the app's defaults come out as the app wrote them.
+ * build.json gives the build facts over their defaults. config/app.php is a
+ * plain `return [...]` file that calls env(); a child PHP evaluates it with
+ * env() answering from .env and the environment, so app.name and app.id come
+ * out as the app wrote them. app.id is the app's identity: build.json may
+ * repeat it and must then match.
  */
 final class ManifestReader
 {
-    private const DEFAULTS = [
-        'name' => null,
-        'bundle_id' => null,
-        'version' => '0.1.0',
-        'sketch' => null,
-        'icon' => null,
-        'extensions' => [],
-        'php' => null,
-        'repository' => 'phpacker/php-bin',
-        'sign' => 'adhoc',
-        'targets' => ['macos-arm64'],
-        'env' => [],
-        'env_except' => [],
-    ];
-
     public function __construct(
         private readonly string $app_dir,
         private readonly string $php_binary = PHP_BINARY,
@@ -37,17 +24,34 @@ final class ManifestReader
     public function read(): Manifest
     {
         $config = $this->evaluate();
-        $build = array_merge(self::DEFAULTS, $config['build']);
+        $build = (new BuildJson($this->app_dir))->read();
         $name = (string) ($build['name'] ?? $config['app']['name'] ?? 'Venusian');
         $sketches = $config['sketches'];
 
-        $extensions = array_map('strtolower', [...$build['extensions'], ...$this->lockExtensions()]);
+        $app_id = $config['app']['id'] ?? null;
+        if (! is_string($app_id) || $app_id === '') {
+            throw new RuntimeException("config/app.php has no app.id; add 'id' => env('APP_ID', 'com.venusian.app') under name (framework 0.10 ships it).");
+        }
+
+        $id = $build['id'] ?? $app_id;
+        if ($id !== $app_id) {
+            throw new RuntimeException("build.json names {$id} but config/app.php resolves app.id to {$app_id}; make them match, the toolkit engines get pissy when app ids don't match.");
+        }
+
+        $lock = $this->lock();
+        $extensions = array_map('strtolower', [...$build['extensions'], ...$this->lockExtensions($lock)]);
         $extensions = array_values(array_unique($extensions));
         sort($extensions);
 
+        $env = array_diff_key(
+            array_map('strval', [...$config['dotenv'], ...(array) $build['env']]),
+            array_flip((array) $build['env_except']),
+        );
+        $env['APP_ID'] = $id;
+
         return new Manifest(
             name: $name,
-            bundle_id: (string) ($build['bundle_id'] ?? 'com.venusian.'.trim(strtolower((string) preg_replace('/[^A-Za-z0-9]+/', '-', $name)), '-')),
+            id: $id,
             version: (string) $build['version'],
             sketch: $build['sketch'] ?? (count($sketches) === 1 ? $sketches[0] : null),
             sketches: $sketches,
@@ -58,17 +62,22 @@ final class ManifestReader
             sign: (string) $build['sign'],
             targets: array_values((array) $build['targets']),
             base_path: $this->app_dir,
-            env: array_diff_key(
-                array_map('strval', [...$config['dotenv'], ...(array) $build['env']]),
-                array_flip((array) $build['env_except']),
-            ),
+            env: $env,
+            summary: (string) $build['summary'],
+            description: (string) $build['description'],
+            author: (string) $build['author'],
+            homepage: (string) $build['homepage'],
+            license: (string) $build['license'],
+            category: (string) $build['category'],
+            zts: (bool) $build['zts'],
+            windowed: $this->windowed($lock),
         );
     }
 
     /**
-     * config/build.php, config/app.php, the sketch names and the parsed .env, from a child PHP.
+     * config/app.php, the sketch names and the parsed .env, from a child PHP.
      *
-     * @return array{build: array<string, mixed>, app: array<string, mixed>, sketches: list<string>, dotenv: array<string, string>}
+     * @return array{app: array<string, mixed>, sketches: list<string>, dotenv: array<string, string>}
      */
     private function evaluate(): array
     {
@@ -82,19 +91,23 @@ final class ManifestReader
         return json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
     }
 
-    /** @return list<string> */
-    private function lockExtensions(): array
+    /** @return array<string, mixed> composer.lock, or an empty lock */
+    private function lock(): array
     {
-        $lock = $this->app_dir.'/composer.lock';
+        $path = $this->app_dir.'/composer.lock';
 
-        if (! is_file($lock)) {
-            return [];
-        }
+        return is_file($path) ? json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR) : ['packages' => []];
+    }
 
+    /**
+     * @param  array<string, mixed>  $lock
+     * @return list<string>
+     */
+    private function lockExtensions(array $lock): array
+    {
         $names = [];
-        $packages = json_decode((string) file_get_contents($lock), true, flags: JSON_THROW_ON_ERROR)['packages'] ?? [];
 
-        foreach ($packages as $package) {
+        foreach ($lock['packages'] ?? [] as $package) {
             foreach (array_keys($package['require'] ?? []) as $requirement) {
                 if (str_starts_with($requirement, 'ext-')) {
                     $names[] = substr($requirement, 4);
@@ -103,5 +116,17 @@ final class ManifestReader
         }
 
         return $names;
+    }
+
+    /** A toolkit package in the lock makes a windowed app. @param  array<string, mixed>  $lock */
+    private function windowed(array $lock): bool
+    {
+        foreach ($lock['packages'] ?? [] as $package) {
+            if (str_starts_with((string) ($package['name'] ?? ''), 'jovian/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

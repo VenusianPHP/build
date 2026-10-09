@@ -6,7 +6,7 @@ generated: { by: "claude-fable-5-1", at: "2026-10-08T00:00:00Z" }
 
 # venusian/build Knowledge Bundle
 
-Package knowledge for `venusian/build` 0.10.0: the `venusian build` tool that compiles a Venusian app into a native executable. Read this index first; open only the concepts needed.
+Package knowledge for `venusian/build` 0.10.4: the `venusian build` tool that compiles a Venusian app into a signed `.app` for macOS and a `.deb` for Linux. Read this index first; open only the concepts needed.
 
 **Trust rule:** concepts an agent creates stay `draft` until a human verifies them. Behavioural claims name the Pest test that backs them.
 **Scope:** this package only. Packaged-mode paths live in `venusian/framework`'s bundle; tool discovery and `install:sdk` in `venusian/installer`'s.
@@ -17,5 +17,5 @@ Package knowledge for `venusian/build` 0.10.0: the `venusian build` tool that co
 
 # Core
 
-* [Build pipeline](core/build-pipeline.md) - Inspect → manifest → interview → phar → runtime → extensions → combine → bundle → sign; the class behind each step. (`draft`)
-* [Measured facts](core/measured-facts.md) - What was measured on 2026-10-08 about phpmicro, php-bin, PHPacker and signing; the design rests on these. (`draft`)
+* [Build pipeline](core/build-pipeline.md) - Inspect → build.json → manifest and app.id → interview → phar once → each target: `.app` (runtime, extensions, combine, bundle, sign) or `.deb` (resolve, docker host, compile in the build image, package). (`draft`)
+* [Measured facts](core/measured-facts.md) - What was measured on 2026-10-08 and 09 about phpmicro, php-bin, PHPacker, signing, system-linked compiles, GTK floors and Linux desktop identity; the design rests on these. (`draft`)

@@ -7,20 +7,23 @@ use RuntimeException;
 use Symfony\Component\Process\Process;
 
 /**
- * Where the .so files the runtime loads come from: the PHP that runs venusian.
+ * Where the .so files the runtime loads come from: the PHP that runs venusian,
+ * or the one build.json php names.
  *
- * The runtime is NTS. When the running PHP is NTS its extension_dir is used
- * as it is. When it is ZTS (zhp), its extensions cannot load into the
- * runtime, so the NTS directory beside it is used: the same path without the
- * -zts suffix, where an NTS build of the same PHP installs its extensions.
- * build.php names another PHP outright.
+ * A runtime built to match that PHP takes it as it is (running()). A runtime
+ * that is always NTS (php-bin on macOS) needs NTS extensions (nts()): an NTS
+ * PHP gives its own extension_dir; a ZTS one (zhp) gives the NTS directory
+ * beside it, the same path without the -zts suffix, where an NTS build of the
+ * same PHP installs its extensions.
+ *
+ * @phpstan-type Php array{binary: string, version: string, zts: bool, extension_dir: string}
  */
 final class PhpFinder
 {
     private readonly Closure $describe;
 
     /**
-     * @param  string|null  $configured  build.php, or null for the PHP running venusian
+     * @param  string|null  $configured  build.json php, or null for the PHP running venusian
      * @param  Closure(string): (array{zts: bool, version: string, extension_dir: string}|null)|null  $describe
      */
     public function __construct(
@@ -31,29 +34,40 @@ final class PhpFinder
         $this->describe = $describe ?? self::describeWithProcess(...);
     }
 
-    /** @return array{binary: string, version: string, extension_dir: string} version is major.minor */
-    public function nts(): array
+    /** @return Php the PHP as it is; version is major.minor */
+    public function running(): array
     {
         $binary = $this->configured ?: $this->running;
         $facts = ($this->describe)($binary) ?? throw new RuntimeException("{$binary} is not a PHP binary");
-        $version = implode('.', array_slice(explode('.', $facts['version']), 0, 2));
-        $directory = rtrim($facts['extension_dir'], '/');
 
-        if (! $facts['zts']) {
-            return ['binary' => $binary, 'version' => $version, 'extension_dir' => $directory];
+        return [
+            'binary' => $binary,
+            'version' => implode('.', array_slice(explode('.', $facts['version']), 0, 2)),
+            'zts' => (bool) $facts['zts'],
+            'extension_dir' => rtrim($facts['extension_dir'], '/'),
+        ];
+    }
+
+    /** @return Php an NTS PHP, or the NTS directory beside a ZTS one; zts is always false */
+    public function nts(): array
+    {
+        $php = $this->running();
+
+        if (! $php['zts']) {
+            return $php;
         }
 
         if ($this->configured) {
-            throw new RuntimeException("{$binary} is ZTS; the runtime is NTS, so its extensions cannot load. Set build.php to an NTS PHP.");
+            throw new RuntimeException("{$php['binary']} is ZTS; the runtime is NTS, so its extensions cannot load. Set php in build.json to an NTS PHP.");
         }
 
-        $sibling = (string) preg_replace('/-zts$/', '', $directory);
+        $sibling = (string) preg_replace('/-zts$/', '', $php['extension_dir']);
 
-        if ($sibling === $directory || ! is_dir($sibling)) {
-            throw new RuntimeException("{$binary} is ZTS and has no NTS extension directory beside {$directory}. Install the extensions into an NTS PHP {$version} and set build.php to it.");
+        if ($sibling === $php['extension_dir'] || ! is_dir($sibling)) {
+            throw new RuntimeException("{$php['binary']} is ZTS and has no NTS extension directory beside {$php['extension_dir']}. Install the extensions into an NTS PHP {$php['version']} and set php in build.json to it.");
         }
 
-        return ['binary' => $binary, 'version' => $version, 'extension_dir' => $sibling];
+        return [...$php, 'zts' => false, 'extension_dir' => $sibling];
     }
 
     /** @return array{zts: bool, version: string, extension_dir: string}|null */

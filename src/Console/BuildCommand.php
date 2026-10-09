@@ -16,14 +16,20 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Process\Process;
 use Venusian\Build\App\AppInspector;
+use Venusian\Build\App\BuildJson;
 use Venusian\Build\App\ManifestReader;
 use Venusian\Build\Build;
+use Venusian\Build\Hosts\Docker;
+use Venusian\Build\Hosts\UserConfig;
 use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Runtime\GitHubReleases;
 use Venusian\Build\Runtime\MicroCombiner;
 use Venusian\Build\Runtime\RuntimeStore;
+use Venusian\Build\Sources\Sources;
 use Venusian\Build\Targets\CodeSigner;
+use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
+use Venusian\Build\Targets\MacTarget;
 
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
@@ -66,27 +72,35 @@ class BuildCommand extends Command
         }
 
         try {
-            $manifest = (new ManifestReader($dir))->read();
+            $read = (new ManifestReader($dir))->read();
+            $manifest = $read;
             $name = $input->getArgument('name');
 
             if (is_string($name) && $name !== '') {
-                $derived = $manifest->bundle_id === 'com.venusian.'.$manifest->kebab();
                 $manifest = $manifest->with(['name' => $name]);
-                $manifest = $derived ? $manifest->with(['bundle_id' => 'com.venusian.'.$manifest->kebab()]) : $manifest;
             }
 
             intro("Building {$manifest->name}");
-            $manifest = ($this->interview ?? new Interview)->ask($manifest, $input->isInteractive());
+            $build = $this->build ?? self::services();
+            $asked = ($this->interview ?? new Interview)->ask($manifest, $input->isInteractive(), $build->signs($manifest));
 
-            $app = ($this->build ?? self::services())->run($dir, $manifest, fn (string $line) => info($line));
+            if ($input->isInteractive()) {
+                (new BuildJson($dir))->write(Interview::answers($read, $asked));
+            }
+
+            $manifest = $asked;
+
+            $outputs = $build->run($dir, $manifest, fn (string $line) => info($line));
         } catch (RuntimeException $e) {
             error($e->getMessage());
 
             return Command::FAILURE;
         }
 
-        $size = round(self::size($app) / 1_048_576, 1);
-        outro("{$app} ({$size} MB)");
+        foreach ($outputs as $output) {
+            $size = round(self::size($output) / 1_048_576, 1);
+            outro("{$output} ({$size} MB)");
+        }
 
         return Command::SUCCESS;
     }
@@ -99,18 +113,23 @@ class BuildCommand extends Command
             (new Process($command, $cwd))->setTimeout(600)->mustRun();
         };
         $home = getenv('HOME') ?: sys_get_temp_dir();
+        $sources = Sources::real("{$home}/.venusian/build/sources");
+        $docker = Docker::real();
+        $hosts = (new UserConfig($home))->hosts();
 
-        return new Build(
-            new RuntimeStore($home.'/.venusian/build/runtimes', new GitHubReleases, new MicroCombiner),
-            new PharBuilder(PHP_BINARY, $files),
-            new MicroCombiner,
-            new MacAppBundle($files, $run),
-            new CodeSigner($run),
-        );
+        return new Build(new PharBuilder(PHP_BINARY, $files), [
+            new MacTarget(new RuntimeStore("{$home}/.venusian/build/runtimes", new GitHubReleases, new MicroCombiner), new MicroCombiner, new MacAppBundle($files, $run), new CodeSigner($run)),
+            new DebTarget('x86_64', $sources, $docker, $hosts),
+            new DebTarget('arm64', $sources, $docker, $hosts),
+        ]);
     }
 
     private static function size(string $path): int
     {
+        if (is_file($path)) {
+            return (int) filesize($path);
+        }
+
         $total = 0;
 
         foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS)) as $file) {

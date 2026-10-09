@@ -14,13 +14,19 @@ use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Runtime\MicroCombiner;
 use Venusian\Build\Runtime\RuntimeStore;
 use Venusian\Build\Targets\CodeSigner;
+use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
+use Venusian\Build\Targets\MacTarget;
+use Venusian\Build\Tests\Fakes\FakeDocker;
 use Venusian\Build\Tests\Fakes\FakeReleases;
+use Venusian\Build\Tests\Fakes\FakeSources;
 
 /*
  * venusian build, end to end over fakes: a fixture app, a fake php-bin
- * release whose micro.sfx is a shell script, an NTS PHP described by a
- * closure whose extension_dir holds appkit.so, and recorded codesign calls.
+ * release whose micro.sfx is a shell script, a PHP described by a closure
+ * whose extension_dir holds appkit.so and epoll.so, and recorded codesign
+ * calls; a .deb target over a fake Packagist and a fake docker CLI. The host
+ * is named, so both paths run anywhere.
  */
 beforeEach(function () {
     $this->root = sys_get_temp_dir().'/venusian-build-cmd-'.bin2hex(random_bytes(6));
@@ -35,25 +41,25 @@ beforeEach(function () {
     (new Process([PHP_BINARY, (new ExecutableFinder)->find('composer'), 'update', '--no-install', '--no-interaction', '--quiet'], $this->root.'/app'))->mustRun();
     mkdir($this->root.'/app/vendor', 0777, true);
     touch($this->root.'/app/vendor/autoload.php');
-    file_put_contents($this->root.'/app/config/build.php', "<?php\n\nreturn ['extensions' => ['appkit'], 'version' => '2.0.0'];\n");
+    file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'version' => '2.0.0']));
     mkdir($this->root.'/ext');
     file_put_contents($this->root.'/ext/appkit.so', 'APPKIT');
+
+    file_put_contents($this->root.'/ext/epoll.so', 'EPOLL');
 
     $this->commands = [];
     $run = function (array $command, ?string $cwd = null): void {
         $this->commands[] = $command;
     };
-    $describe = fn (string $binary): ?array => $binary === '/fake/php' ? ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $this->root.'/ext'] : null;
+    $this->docker = new FakeDocker($this->root);
+    $this->deb = fn (): DebTarget => new DebTarget('x86_64', FakeSources::make($this->root.'/cache'), $this->docker->docker(), []);
+    $this->make = function (string $host, array $extra = [], string $os_family = 'Darwin') use ($files, $run): Build {
+        $describe = fn (string $binary): ?array => $binary === '/fake/php' ? ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $this->root.'/ext'] : null;
+        $mac = new MacTarget(new RuntimeStore($this->root.'/runtimes', new FakeReleases, new MicroCombiner), new MicroCombiner, new MacAppBundle($files, $run), new CodeSigner($run), fn (?string $configured): PhpFinder => new PhpFinder($configured, $describe, '/fake/php'), $os_family);
 
-    $this->build = new Build(
-        new RuntimeStore($this->root.'/runtimes', new FakeReleases, new MicroCombiner),
-        new PharBuilder(PHP_BINARY, $files),
-        new MicroCombiner,
-        new MacAppBundle($files, $run),
-        new CodeSigner($run),
-        fn (?string $configured): PhpFinder => new PhpFinder($configured, $describe, '/fake/php'),
-        'Darwin',
-    );
+        return new Build(new PharBuilder(PHP_BINARY, $files), [$mac, ...$extra], $host);
+    };
+    $this->build = ($this->make)('macos-arm64');
 });
 
 afterEach(function () {
@@ -92,20 +98,66 @@ it('builds a signed bundle with the runtime, the phar and the bundled extension'
 });
 
 it('takes the interview defaults on Enter and a name argument over them', function () {
-    Prompt::fake([Key::ENTER, Key::ENTER, Key::ENTER, Key::ENTER]);
+    Prompt::fake([Key::ENTER, Key::ENTER, 'A <a@b.c>', Key::ENTER, 'Sky', Key::ENTER, Key::ENTER]);
     $tester = new CommandTester(new BuildCommand($this->build, new Interview));
 
     $exit = $tester->execute(['name' => 'Night Sky', '--dir' => $this->root.'/app']);
 
     expect($exit)->toBe(0, $tester->getDisplay())
         ->and(is_dir($this->root.'/app/build/Night Sky.app'))->toBeTrue()
-        ->and(file_get_contents($this->root.'/app/build/Night Sky.app/Contents/Info.plist'))->toContain('<string>com.venusian.night-sky</string>');
+        ->and(file_get_contents($this->root.'/app/build/Night Sky.app/Contents/Info.plist'))->toContain('<string>com.venusian.app</string>');
+
+    expect(json_decode(file_get_contents($this->root.'/app/build.json'), true))->toMatchArray(['id' => 'com.venusian.app', 'name' => 'Night Sky', 'author' => 'A <a@b.c>', 'summary' => 'Sky']);
 });
 
-it('refuses a target the host cannot build', function () {
-    file_put_contents($this->root.'/app/config/build.php', "<?php\n\nreturn ['extensions' => ['appkit'], 'targets' => ['linux-arm64']];\n");
+it('builds a .deb on a Linux host and asks no signing question', function () {
+    file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'version' => '2.0.0', 'targets' => ['linux-x86_64']]));
+    Prompt::fake([Key::ENTER, Key::ENTER, 'A <a@b.c>', Key::ENTER, 'Sky', Key::ENTER]);
+    $tester = new CommandTester(new BuildCommand(($this->make)('linux-x86_64', [($this->deb)()]), new Interview));
+
+    expect($tester->execute(['--dir' => $this->root.'/app']))->toBe(0, $tester->getDisplay())
+        ->and(file_get_contents($this->root.'/app/build/star-gazer_2.0.0_amd64.deb'))->toBe('DEBFILE')
+        ->and($tester->getDisplay())->toContain('star-gazer_2.0.0_amd64.deb')
+        ->and($tester->getDisplay())->toContain('Leaving out appkit: php-io-extensions/appkit v0.10.0 builds on darwin only')
+        ->and($tester->getDisplay())->not->toContain('Signing');
+});
+
+it('builds the available targets when build.json lists both OSes, and says why the other waits', function () {
+    file_put_contents($this->root.'/app/build.json', json_encode(['version' => '2.0.0', 'author' => 'A <a@b.c>', 'targets' => ['macos-arm64', 'linux-x86_64']]));
+    $tester = new CommandTester(new BuildCommand(($this->make)('macos-arm64', [($this->deb)()], 'Linux'), new Interview));
+
+    expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(0, $tester->getDisplay())
+        ->and($tester->getDisplay())->toContain('Skipping macos-arm64: macos-arm64 builds run on a Mac')
+        ->and(is_file($this->root.'/app/build/star-gazer_2.0.0_amd64.deb'))->toBeTrue();
+});
+
+it('refuses a target no wired target builds', function () {
+    file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'targets' => ['linux-arm64']]));
     $tester = new CommandTester(new BuildCommand($this->build, new Interview));
 
     expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
-        ->and($tester->getDisplay())->toContain('linux-arm64');
+        ->and($tester->getDisplay())->toContain('Target linux-arm64 is not one venusian build knows: macos-arm64.');
+});
+
+it('refuses a target it does not know', function () {
+    file_put_contents($this->root.'/app/build.json', json_encode(['targets' => ['windows-x86_64']]));
+    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+
+    expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
+        ->and($tester->getDisplay())->toContain('build.json targets: windows-x86_64 is not one of macos-arm64, linux-arm64, linux-x86_64');
+});
+
+it('refuses a machine it has no target for', function () {
+    $tester = new CommandTester(new BuildCommand(($this->make)('macos-x86_64'), new Interview));
+
+    expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
+        ->and($tester->getDisplay())->toContain('Target macos-x86_64 is not one venusian build knows: macos-arm64.');
+});
+
+it('names this machine from its OS family and CPU', function () {
+    expect(Build::hostName('Darwin', 'arm64'))->toBe('macos-arm64')
+        ->and(Build::hostName('Linux', 'aarch64'))->toBe('linux-arm64')
+        ->and(Build::hostName('Linux', 'x86_64'))->toBe('linux-x86_64')
+        ->and(Build::hostName('Linux', 'AMD64'))->toBe('linux-x86_64')
+        ->and(Build::hostName('Windows', 'AMD64'))->toBe('windows-x86_64');
 });

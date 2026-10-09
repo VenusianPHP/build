@@ -82,7 +82,7 @@ final class MacAppBundle
             <key>CFBundleDisplayName</key>
             <string>{$h($manifest->name)}</string>
             <key>CFBundleIdentifier</key>
-            <string>{$h($manifest->bundle_id)}</string>
+            <string>{$h($manifest->id)}</string>
             <key>CFBundleVersion</key>
             <string>{$h($manifest->version)}</string>
             <key>CFBundleShortVersionString</key>
