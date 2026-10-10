@@ -16,9 +16,11 @@ use Symfony\Component\Process\Process;
  */
 final class ManifestReader
 {
+    /** @param  bool  $zts  the PHP running the build's thread safety, which the runtime follows unless build.json sets zts (Angel, 2026-10-08) */
     public function __construct(
         private readonly string $app_dir,
         private readonly string $php_binary = PHP_BINARY,
+        private readonly bool $zts = PHP_ZTS,
     ) {}
 
     public function read(): Manifest
@@ -66,7 +68,7 @@ final class ManifestReader
             homepage: (string) $build['homepage'],
             license: (string) $build['license'],
             category: (string) $build['category'],
-            zts: (bool) $build['zts'],
+            zts: $build['zts'] ?? $this->zts,
             windowed: $this->windowed($lock),
             build: (int) $build['build'],
             permissions: (array) $build['permissions'],

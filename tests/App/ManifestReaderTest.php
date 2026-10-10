@@ -118,3 +118,11 @@ it('resolves the database with build.json env over .env, as the packaged .env wi
 
     expect((new ManifestReader($this->root))->read()->database)->toBe(['driver' => 'sqlite', 'database' => $this->root.'/database/database.sqlite']);
 });
+
+it('compiles to the thread safety of the PHP running the build unless build.json says', function () {
+    expect((new ManifestReader($this->root, PHP_BINARY, zts: true))->read()->zts)->toBeTrue()
+        ->and((new ManifestReader($this->root, PHP_BINARY, zts: false))->read()->zts)->toBeFalse();
+
+    file_put_contents($this->root.'/build.json', json_encode(['version' => '2.0.0', 'zts' => false]));
+    expect((new ManifestReader($this->root, PHP_BINARY, zts: true))->read()->zts)->toBeFalse();
+});

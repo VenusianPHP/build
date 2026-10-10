@@ -92,7 +92,7 @@ final class DebTarget implements Target
 
         $report("Compiling PHP {$php['version']} ".($manifest->zts ? 'ZTS' : 'NTS')." with the Venusian SAPI {$sapi['version']} and ".implode(', ', $names));
         if ($packages !== []) {
-            $report('From Packagist: '.implode(', ', array_map(fn (array $p): string => "{$p['name']} {$p['version']} (".substr($p['reference'], 0, 7).')', $packages)));
+            $report('From Packagist: '.implode(', ', array_map(fn (array $p): string => $p['name'].(str_starts_with($p['package'], 'php-io-extensions/') ? '' : " ({$p['package']})")." {$p['version']} (".substr($p['reference'], 0, 7).')', $packages)));
         }
 
         $this->ensureImage($context, $report);

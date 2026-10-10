@@ -27,3 +27,5 @@
 ## 2026-10-10
 
 * **Leaner builds**: the phar ships what git would publish, for the app and each path-repository package, with an authoritative classmap; a sqlite app ships a fresh migrated `database/database.sqlite`; a scan over nikic/php-parser adds the extensions the app's own code calls and reports vendor-only ones; every target runs the built binary once on `.venusian-boot-check.php` before packaging. Stargazer: phar 26 MB from 46, `.dmg` 13 MB from 30, `.deb` 6.6 MB from 17.1. [Build pipeline](core/build-pipeline.md) steps 5, 5a, 6 and 9; [Measured facts](core/measured-facts.md) fact 25.
+
+* **Any php-ext package, and the invoking PHP**: `build.json` `extensions` names any php-ext package on Packagist in full (`phpredis/phpredis`, `pecl/parallel`), compiled under its declared extension name at its newest stable tag; an unknown plain name lists Packagist's php-ext hits. The runtime follows the PHP running the build again (thread safety, newest release of its minor; `zts` only overrides), as Angel asked on 2026-10-08; build.json's `zts: false` default had dropped that. [Build pipeline](core/build-pipeline.md) step 7.

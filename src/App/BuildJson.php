@@ -35,8 +35,8 @@ final class BuildJson
         'license' => '',
         'category' => 'Utility', // freedesktop main category
         'permissions' => [],     // macOS: permission => the sentence macOS shows when it asks
-        'extensions' => [],      // ext names beyond what composer.lock declares
-        'zts' => false,          // thread-safe runtime (Linux and macOS)
+        'extensions' => [],      // beyond what composer.lock declares: plain names, or php-ext packages as vendor/package
+        'zts' => null,           // thread-safe runtime (Linux and macOS); unset follows the PHP running the build
         'targets' => [],         // [] = this machine
         'env' => [],
         'env_except' => [],
@@ -160,8 +160,8 @@ final class BuildJson
             throw new RuntimeException(self::FILE.' env must be an object of KEY: value.');
         }
 
-        if (! is_bool($values['zts'])) {
-            throw new RuntimeException(self::FILE.' zts must be true or false.');
+        if (! is_bool($values['zts']) && ! is_null($values['zts'])) {
+            throw new RuntimeException(self::FILE.' zts must be true or false, or left out to follow the PHP running the build.');
         }
 
         if (! is_int($values['build']) || $values['build'] < 1) {

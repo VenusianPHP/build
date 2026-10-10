@@ -72,3 +72,25 @@ it('reports the extensions vendor code calls that the build does not compile in'
 
     expect($this->lines)->toContain('Vendor code also calls, not compiled in: dom (league/commonmark), intl (laravel/framework, nesbot/carbon +1); add one to build.json extensions if the app needs it');
 });
+
+it('compiles a php-ext package named in full under its extension name, once, with what it needs', function () {
+    [$names, $args, $packages] = (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve(['phpredis/phpredis', 'redis'], false, $this->report);
+
+    $redis = array_values(array_filter($packages, fn (array $p): bool => $p['name'] === 'redis'));
+    expect(array_count_values($names)['redis'])->toBe(1)
+        ->and($names)->toContain('session')
+        ->and($args)->toContain('--enable-redis')
+        ->and($args)->toContain('--enable-session')
+        ->and($redis[0]['package'])->toBe('phpredis/phpredis');
+});
+
+it('refuses an extension that cannot build at the thread safety of this build, naming it', function () {
+    (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve(['pecl/parallel'], false, $this->report);
+})->throws(RuntimeException::class, 'parallel (pecl/parallel v1.2.15) needs thread-safe PHP, and this build compiles NTS (build.json "zts", else the PHP running the build): run the build with a ZTS PHP (zenusian), or set "zts": true in build.json.');
+
+it('compiles a thread-safe-only extension into a ZTS build', function () {
+    [$names, $args] = (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve(['pecl/parallel'], true, $this->report);
+
+    expect($names)->toContain('parallel')
+        ->and($args)->toContain('--enable-parallel');
+});

@@ -14,6 +14,21 @@ final class FakeSources
 {
     public static function packagist(string $url): string
     {
+        if (str_starts_with($url, 'https://www.php.net/releases/')) {
+            return json_encode(['version' => '8.4.26']);
+        }
+        if (str_starts_with($url, 'https://packagist.org/search.json')) {
+            return json_encode(['results' => []]);
+        }
+        // Packages named in full: phpredis builds either way, parallel only thread safe.
+        $full = [
+            'phpredis/phpredis' => ['6.3.0', ['extension-name' => 'redis', 'configure-options' => [['name' => 'disable-redis-json'], ['name' => 'enable-redis']]]],
+            'pecl/parallel' => ['v1.2.15', ['extension-name' => 'parallel', 'support-nts' => false, 'configure-options' => [['name' => 'enable-parallel']]]],
+        ];
+        $package = substr($url, strlen('https://repo.packagist.org/p2/'), -strlen('.json'));
+        if (isset($full[$package])) {
+            return json_encode(['packages' => [$package => [['version' => $full[$package][0], 'dist' => ['url' => "https://x/{$package}.zip", 'reference' => 'ref-'.basename($package)], 'php-ext' => $full[$package][1]]]]], JSON_THROW_ON_ERROR);
+        }
         $name = str_replace('~dev', '', basename($url, '.json'));
         $apt = [
             'gtk' => ['build' => ['libgtk-4-dev'], 'recommends' => ['libgtk-4-media-gstreamer']],

@@ -8,14 +8,14 @@ use Symfony\Component\Filesystem\Filesystem;
 use Throwable;
 
 /**
- * The source archives a build compiles: php-src from php.net, the
- * Venusian SAPI tag from GitHub, each extension's archive on the build's line
- * from Packagist. Cached under <cache>/{php-src,sapi,ext}; fetched once.
+ * The source archives a build compiles: php-src from php.net at the newest
+ * release of the minor the build runs on, the Venusian SAPI tag from GitHub,
+ * each extension's archive from Packagist: php-io-extensions on the build's
+ * line by plain name, any other php-ext package named in full at its newest
+ * stable tag. Cached under <cache>/{php-src,sapi,ext}; fetched once.
  */
 final class Sources
 {
-    public const PHP = '8.4.26';
-
     public const SAPI = 'v0.10.2';
 
     /** The line every extension is taken from: its LINE.x-dev branch, else its newest LINE tag. */
@@ -33,9 +33,16 @@ final class Sources
         private readonly Closure $download,
     ) {}
 
-    /** @return array{path: string, version: string} */
-    public function phpSrc(string $version = self::PHP): array
+    /**
+     * php-src at $version, else at the newest release of the PHP running the build's minor:
+     * the app ships the PHP it was built with (Angel, 2026-10-08).
+     *
+     * @return array{path: string, version: string}
+     */
+    public function phpSrc(?string $version = null): array
     {
+        $version ??= $this->newestPhp(PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION);
+
         return ['path' => $this->fetch("https://www.php.net/distributions/php-{$version}.tar.xz", "php-src/php-{$version}.tar.xz"), 'version' => $version];
     }
 
@@ -45,19 +52,100 @@ final class Sources
         return ['path' => $this->fetch("https://github.com/VenusianPHP/sapi/archive/refs/tags/{$tag}.tar.gz", "sapi/sapi-{$tag}.tar.gz"), 'version' => $tag];
     }
 
-    /**
-     * The extension on the build's line: the LINE.x-dev branch, where the work lands ahead of
-     * the tags, else the newest LINE tag. The reference is the commit, so a moved branch is a
-     * new archive and a new runtime. os_families and os_families_exclude come from php-ext as
-     * declared; an empty os_families means every OS. apt_* come from extra.venusian.system.apt:
-     * build packages for the image, depends and recommends for what the binary loads at run
-     * time and dpkg-shlibdeps cannot see.
-     *
-     * @return array{path: string, version: string, reference: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}
-     */
-    public function extension(string $name): array
+    /** The newest release php.net lists for a minor, like 8.4. */
+    private function newestPhp(string $minor): string
     {
-        $package = self::VENDOR."/{$name}";
+        try {
+            $release = json_decode(($this->get)("https://www.php.net/releases/?json&version={$minor}"), true, flags: JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            throw new RuntimeException("Cannot ask php.net for the newest PHP {$minor} release: {$e->getMessage()}", previous: $e);
+        }
+
+        return is_string($release['version'] ?? null) && str_starts_with($release['version'], "{$minor}.")
+            ? $release['version']
+            : throw new RuntimeException("php.net lists no PHP {$minor} release; the build compiles the minor of the PHP running it.");
+    }
+
+    /**
+     * An extension's release. A plain name is a php-io-extensions package on the build's line:
+     * the LINE.x-dev branch, where the work lands ahead of the tags, else the newest LINE tag.
+     * A name with a vendor (phpredis/phpredis, pecl/parallel) is that php-ext package at its
+     * newest stable tag. name is the extension name php-ext declares. The reference is the
+     * commit, so a moved branch is a new archive and a new runtime. configure is the option
+     * that enables the extension itself. os_families and os_families_exclude come from php-ext
+     * as declared; an empty os_families means every OS; support_zts and support_nts default to
+     * true as PIE reads them. apt_* come from extra.venusian.system.apt: build packages for the
+     * image, depends and recommends for what the binary loads at run time and dpkg-shlibdeps
+     * cannot see.
+     *
+     * @return array{name: string, package: string, path: string, version: string, reference: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, support_zts: bool, support_nts: bool, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}
+     */
+    public function extension(string $requested): array
+    {
+        if (str_contains($requested, '/')) {
+            $package = strtolower($requested);
+            $release = $this->newestStable($package);
+            $default = (string) preg_replace('/^ext-/', '', basename($package));
+        } else {
+            $package = self::VENDOR."/{$requested}";
+            $release = $this->onLine($package, $requested);
+            $default = $requested;
+        }
+
+        $version = (string) $release['version'];
+        $meta = $release['php-ext'] ?? null;
+
+        if (! is_array($meta) || $meta === []) {
+            throw new RuntimeException("{$package} {$version} declares no php-ext build metadata in composer.json.");
+        }
+
+        $name = strtolower((string) ($meta['extension-name'] ?? $default));
+        $reference = (string) ($release['dist']['reference'] ?? $release['source']['reference'] ?? $version);
+        $options = array_values(array_map(fn (mixed $option): string => ltrim((string) ($option['name'] ?? ''), '-'), (array) ($meta['configure-options'] ?? [])));
+        $own = array_values(array_intersect($options, ["enable-{$name}", "with-{$name}"]));
+        $flag = $own[0] ?? $options[0] ?? "enable-{$name}";
+        $apt = (array) ($release['extra']['venusian']['system']['apt'] ?? []);
+
+        return [
+            'name' => $name,
+            'package' => $package,
+            'path' => $this->fetch((string) $release['dist']['url'], "ext/{$name}-{$version}-".substr($reference, 0, 12).'.zip'),
+            'version' => $version,
+            'reference' => $reference,
+            'build_path' => trim((string) ($meta['build-path'] ?? ''), '/') ?: '.',
+            'configure' => '--'.$flag,
+            'os_families' => array_values((array) ($meta['os-families'] ?? [])),
+            'os_families_exclude' => array_values((array) ($meta['os-families-exclude'] ?? [])),
+            'support_zts' => (bool) ($meta['support-zts'] ?? true),
+            'support_nts' => (bool) ($meta['support-nts'] ?? true),
+            'apt_build' => array_values((array) ($apt['build'] ?? [])),
+            'apt_depends' => array_values((array) ($apt['depends'] ?? [])),
+            'apt_recommends' => array_values((array) ($apt['recommends'] ?? [])),
+        ];
+    }
+
+    /**
+     * A php-ext package's newest stable tag: versions of digits and dots only, so no RC, alpha or branch.
+     *
+     * @return array<string, mixed>
+     */
+    private function newestStable(string $package): array
+    {
+        $tags = $this->index($package, $package) ?? throw new RuntimeException("{$package} is not on Packagist; check the name in build.json extensions.");
+        $stable = array_values(array_filter(self::entries($tags, $package), fn (array $entry): bool => (bool) preg_match('/^v?\d+(\.\d+)*$/', (string) ($entry['version'] ?? ''))));
+        usort($stable, fn (array $a, array $b): int => version_compare(ltrim((string) $b['version'], 'v'), ltrim((string) $a['version'], 'v')));
+
+        return $stable[0] ?? throw new RuntimeException("{$package} has no stable release on Packagist.");
+    }
+
+    /**
+     * A php-io-extensions package on the build's line. When Packagist has none under the name,
+     * the php-ext packages a search finds for it are named, so build.json can name one in full.
+     *
+     * @return array<string, mixed>
+     */
+    private function onLine(string $package, string $name): array
+    {
         $branch = $this->index("{$package}~dev", $package);
         $release = null;
         foreach (self::entries($branch, $package) as $entry) {
@@ -70,36 +158,29 @@ final class Sources
         if ($release === null) {
             $tags = $this->index($package, $package);
             if ($branch === null && $tags === null) {
-                throw new RuntimeException("{$package} is not on Packagist; tag and publish it, or drop {$name} from the app.");
+                $found = $this->search($name);
+                throw new RuntimeException("{$name} is not part of php-src and {$package} is not on Packagist; ".($found === []
+                    ? "no php-ext package on Packagist matches {$name}."
+                    : 'name the package that provides it in build.json extensions, one of: '.implode(', ', $found).'.'));
             }
             $line = array_filter(self::entries($tags, $package), fn (array $entry): bool => (bool) preg_match('/^v?'.preg_quote(self::LINE, '/').'\.\d+$/', (string) ($entry['version'] ?? '')));
             usort($line, fn (array $a, array $b): int => version_compare(ltrim((string) $b['version'], 'v'), ltrim((string) $a['version'], 'v')));
             $release = $line[0] ?? throw new RuntimeException("{$package} has no ".self::LINE.'.x-dev branch and no '.self::LINE." tag on Packagist; publish one, or drop {$name} from the app.");
         }
 
-        $version = (string) $release['version'];
-        $meta = $release['php-ext'] ?? null;
+        return $release;
+    }
 
-        if (! is_array($meta) || $meta === []) {
-            throw new RuntimeException("{$package} {$version} declares no php-ext build metadata in composer.json.");
+    /** @return list<string> php-ext packages Packagist's search finds for a name; none when it finds none or cannot answer */
+    private function search(string $name): array
+    {
+        try {
+            $results = json_decode(($this->get)('https://packagist.org/search.json?type=php-ext&q='.rawurlencode($name)), true, flags: JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return [];
         }
 
-        $reference = (string) ($release['dist']['reference'] ?? $release['source']['reference'] ?? $version);
-        $flag = $meta['configure-options'][0]['name'] ?? "enable-{$name}";
-        $apt = (array) ($release['extra']['venusian']['system']['apt'] ?? []);
-
-        return [
-            'path' => $this->fetch((string) $release['dist']['url'], "ext/{$name}-{$version}-".substr($reference, 0, 12).'.zip'),
-            'version' => $version,
-            'reference' => $reference,
-            'build_path' => trim((string) ($meta['build-path'] ?? ''), '/') ?: '.',
-            'configure' => '--'.ltrim($flag, '-'),
-            'os_families' => array_values((array) ($meta['os-families'] ?? [])),
-            'os_families_exclude' => array_values((array) ($meta['os-families-exclude'] ?? [])),
-            'apt_build' => array_values((array) ($apt['build'] ?? [])),
-            'apt_depends' => array_values((array) ($apt['depends'] ?? [])),
-            'apt_recommends' => array_values((array) ($apt['recommends'] ?? [])),
-        ];
+        return array_values(array_slice(array_filter(array_map(fn (mixed $result): string => (string) ($result['name'] ?? ''), (array) ($results['results'] ?? [])), 'strlen'), 0, 6));
     }
 
     /**

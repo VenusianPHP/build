@@ -20,8 +20,8 @@
     "license": { "type": "string", "default": "", "description": "SPDX identifier, such as MIT." },
     "category": { "enum": ["AudioVideo", "Development", "Education", "Game", "Graphics", "Network", "Office", "Science", "Settings", "System", "Utility"], "default": "Utility", "description": "A freedesktop main category; the .app maps it to LSApplicationCategoryType." },
     "permissions": { "type": "object", "additionalProperties": false, "default": {}, "description": "macOS: what the app asks the user for, each with the sentence macOS shows when it asks.", "properties": { "camera": { "type": "string", "minLength": 1 }, "microphone": { "type": "string", "minLength": 1 }, "bluetooth": { "type": "string", "minLength": 1 } } },
-    "extensions": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extension names beyond what composer.lock declares." },
-    "zts": { "type": "boolean", "default": false, "description": "Thread-safe runtime (Linux and macOS)." },
+    "extensions": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extensions beyond what composer.lock declares: a php-src or php-io-extensions name (pdo_sqlite, imgdec), or any php-ext package on Packagist named in full (phpredis/phpredis)." },
+    "zts": { "type": "boolean", "description": "Thread-safe runtime (Linux and macOS). Left out, the runtime follows the PHP running the build: zenusian (ZTS) builds ZTS." },
     "targets": { "type": "array", "items": { "enum": ["macos-arm64", "linux-arm64", "linux-x86_64"] }, "default": [], "description": "Empty means the machine running the build." },
     "env": { "type": "object", "additionalProperties": { "type": "string" }, "default": {}, "description": "Over the app's .env in the packaged app." },
     "env_except": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Keys of the app's .env left out of the packaged app." }

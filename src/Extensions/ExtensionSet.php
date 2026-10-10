@@ -9,9 +9,12 @@ use Venusian\Build\Sources\Sources;
 /**
  * The extensions one build compiles in: the base the framework and the OS's
  * loop need, the app's, and what those pull in. php-src's own become
- * configure flags; the rest come from php-io-extensions on the build's line.
- * An extension whose php-ext metadata leaves the OS out is left out and
- * reported, as are GTK and Qt on macOS, where apps ship AppKit.
+ * configure flags; a plain name otherwise comes from php-io-extensions on the
+ * build's line, and a name with a vendor (phpredis/phpredis) is that php-ext
+ * package, compiled under the extension name it declares. An extension whose
+ * php-ext metadata leaves the OS out is left out and reported, as are GTK and
+ * Qt on macOS, where apps ship AppKit; one that cannot build at the build's
+ * thread safety stops it by name.
  */
 final class ExtensionSet
 {
@@ -51,12 +54,12 @@ final class ExtensionSet
         'dom' => ['libxml'], 'simplexml' => ['libxml'], 'xml' => ['libxml'], 'xmlreader' => ['libxml'], 'xmlwriter' => ['libxml'],
         'pdo_mysql' => ['pdo', 'mysqlnd'], 'pdo_pgsql' => ['pdo'], 'pdo_sqlite' => ['pdo'], 'pcurl' => ['curl'], 'epoll' => ['sockets'],
         'mysqli' => ['mysqlnd'], 'soap' => ['libxml'], 'xsl' => ['libxml', 'dom'],
+        // phpredis compiles its session handler against ext/session by default and declares no dependency for it.
+        'redis' => ['session'],
     ];
 
     /** Toolkits a macOS build never ships (Angel, 2026-10-09). */
     private const NOT_ON_DARWIN = ['gtk', 'qt'];
-
-    private const VENDOR = 'php-io-extensions';
 
     /**
      * @param  string  $os  linux or darwin: the OS the binary runs on, as php-ext os-families names it
@@ -70,15 +73,28 @@ final class ExtensionSet
     ) {}
 
     /**
-     * @param  list<string>  $wanted  the app's extension names
+     * @param  list<string>  $wanted  the app's extension names, or php-ext packages named in full
      * @param  Closure(string): void  $report
      * @param  array<string, list<string>>  $uses  extension => packages whose code calls it
-     * @return array{0: list<string>, 1: list<string>, 2: list<array{name: string, version: string, reference: string, path: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}>}
+     * @return array{0: list<string>, 1: list<string>, 2: list<array{name: string, package: string, version: string, reference: string, path: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, support_zts: bool, support_nts: bool, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}>}
      */
     public function resolve(array $wanted, bool $zts, Closure $report, array $uses = []): array
     {
+        // Packages named in full first: the extension name each declares stands for it, so a plain ext-redis from the lock is that package too.
+        $named = [];
+        $wanted = array_map(function (string $name) use (&$named): string {
+            $name = strtolower($name);
+            if (! str_contains($name, '/')) {
+                return $name;
+            }
+            $package = $this->sources->extension($name);
+            $named[$package['name']] = $package;
+
+            return $package['name'];
+        }, $wanted);
+
         $names = [];
-        $queue = [...self::BASE[$this->os], ...array_map('strtolower', $wanted)];
+        $queue = [...self::BASE[$this->os], ...$wanted];
 
         while ($queue !== []) {
             $name = array_shift($queue);
@@ -115,20 +131,25 @@ final class ExtensionSet
 
                 continue;
             }
-            $package = $this->sources->extension($name);
+            $package = $named[$name] ?? $this->sources->extension($name);
             $families = $package['os_families'];
             if (in_array($this->os, $package['os_families_exclude'], true)) {
-                $report("Leaving out {$name}: ".self::VENDOR."/{$name} {$package['version']} does not build on {$this->os}");
+                $report("Leaving out {$name}: {$package['package']} {$package['version']} does not build on {$this->os}");
 
                 continue;
             }
             if ($families !== [] && ! in_array($this->os, $families, true)) {
-                $report("Leaving out {$name}: ".self::VENDOR."/{$name} {$package['version']} builds on ".implode(', ', $families).' only');
+                $report("Leaving out {$name}: {$package['package']} {$package['version']} builds on ".implode(', ', $families).' only');
 
                 continue;
             }
+            if (! $package[$zts ? 'support_zts' : 'support_nts']) {
+                throw new RuntimeException("{$name} ({$package['package']} {$package['version']}) needs ".($zts
+                    ? 'non-thread-safe PHP, and this build compiles ZTS (build.json "zts", else the PHP running the build): run the build with an NTS PHP, or set "zts": false in build.json.'
+                    : 'thread-safe PHP, and this build compiles NTS (build.json "zts", else the PHP running the build): run the build with a ZTS PHP (zenusian), or set "zts": true in build.json.'));
+            }
             $built[] = $name;
-            $packages[] = ['name' => $name, ...$package];
+            $packages[] = $package;
             $args[] = $package['configure'];
         }
 
