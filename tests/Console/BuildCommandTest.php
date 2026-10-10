@@ -9,23 +9,23 @@ use Symfony\Component\Process\ExecutableFinder;
 use Venusian\Build\Build;
 use Venusian\Build\Console\BuildCommand;
 use Venusian\Build\Console\Interview;
-use Venusian\Build\Extensions\PhpFinder;
 use Venusian\Build\Phar\PharBuilder;
-use Venusian\Build\Runtime\MicroCombiner;
-use Venusian\Build\Runtime\RuntimeStore;
+use Venusian\Build\Hosts\UserConfig;
+use Venusian\Build\Runtime\MacLibraries;
+use Venusian\Build\Runtime\MacRuntime;
 use Venusian\Build\Targets\CodeSigner;
 use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
+use Venusian\Build\Targets\MacDiskImage;
 use Venusian\Build\Targets\MacTarget;
 use Venusian\Build\Tests\Fakes\FakeDocker;
-use Venusian\Build\Tests\Fakes\FakeReleases;
+use Venusian\Build\Tests\Fakes\FakeMac;
 use Venusian\Build\Tests\Fakes\FakeSources;
 
 /*
- * venusian build, end to end over fakes: a fixture app, a fake php-bin
- * release whose micro.sfx is a shell script, a PHP described by a closure
- * whose extension_dir holds appkit.so and epoll.so, and recorded codesign
- * calls; a .deb target over a fake Packagist and a fake docker CLI. The host
+ * venusian build, end to end over fakes: a fixture app; a fake Mac that
+ * answers the SDK path, the library set, the recipe, otool, codesign and
+ * hdiutil; a .deb target over a fake Packagist and a fake docker CLI. The host
  * is named, so both paths run anywhere.
  */
 beforeEach(function () {
@@ -42,24 +42,27 @@ beforeEach(function () {
     mkdir($this->root.'/app/vendor', 0777, true);
     touch($this->root.'/app/vendor/autoload.php');
     file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'version' => '2.0.0']));
-    mkdir($this->root.'/ext');
-    file_put_contents($this->root.'/ext/appkit.so', 'APPKIT');
-
-    file_put_contents($this->root.'/ext/epoll.so', 'EPOLL');
-
-    $this->commands = [];
-    $run = function (array $command, ?string $cwd = null): void {
-        $this->commands[] = $command;
-    };
+    $this->mac = new FakeMac;
+    $this->config = new UserConfig($this->root.'/home');
     $this->docker = new FakeDocker($this->root);
     $this->deb = fn (): DebTarget => new DebTarget('x86_64', FakeSources::make($this->root.'/cache'), $this->docker->docker(), []);
-    $this->make = function (string $host, array $extra = [], string $os_family = 'Darwin') use ($files, $run): Build {
-        $describe = fn (string $binary): ?array => $binary === '/fake/php' ? ['zts' => false, 'version' => '8.4.25', 'extension_dir' => $this->root.'/ext'] : null;
-        $mac = new MacTarget(new RuntimeStore($this->root.'/runtimes', new FakeReleases, new MicroCombiner), new MicroCombiner, new MacAppBundle($files, $run), new CodeSigner($run), fn (?string $configured): PhpFinder => new PhpFinder($configured, $describe, '/fake/php'), $os_family);
+    $this->make = function (string $host, array $extra = [], string $os_family = 'Darwin') use ($files): Build {
+        $run = $this->mac->run();
+        $mac = new MacTarget(
+            new MacRuntime(FakeSources::make($this->root.'/cache'), new MacLibraries($this->root.'/macos', $run), $run, $this->root.'/macos/runtimes'),
+            new MacAppBundle($files, $run),
+            new CodeSigner($run),
+            new MacDiskImage($files, $this->mac->exec()),
+            $this->config,
+            fn (string $tool): bool => true,
+            $os_family,
+            'arm64',
+        );
 
         return new Build(new PharBuilder(PHP_BINARY, $files), [$mac, ...$extra], $host);
     };
     $this->build = ($this->make)('macos-arm64');
+    $this->command = fn (?Build $build = null): BuildCommand => new BuildCommand($build ?? $this->build, new Interview, $this->config, fn (): string => '');
 });
 
 afterEach(function () {
@@ -68,7 +71,7 @@ afterEach(function () {
 
 it('refuses outside a Venusian app, naming what is missing', function () {
     mkdir($this->root.'/empty');
-    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+    $tester = new CommandTester(($this->command)());
 
     expect($tester->execute(['--dir' => $this->root.'/empty'], ['interactive' => false]))->toBe(1)
         ->and($tester->getDisplay())->toContain('composer.json does not require venusian/framework')
@@ -76,30 +79,29 @@ it('refuses outside a Venusian app, naming what is missing', function () {
         ->and($tester->getDisplay())->toContain('bootstrap/app.php is missing');
 });
 
-it('builds a signed bundle with the runtime, the phar and the bundled extension', function () {
-    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+it('builds an ad hoc .app and .dmg from the compiled runtime and the phar', function () {
+    $tester = new CommandTester(($this->command)());
 
     $exit = $tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]);
     expect($exit)->toBe(0, $tester->getDisplay());
 
     $app = $this->root.'/app/build/Star Gazer.app';
-    $binary = (string) file_get_contents($app.'/Contents/MacOS/star-gazer-bin');
+    $dmg = $this->root.'/app/build/star-gazer-2.0.0-macos-arm64.dmg';
 
-    expect($tester->getDisplay())->toContain($app)
-        ->and(str_starts_with($binary, "#!/bin/sh\n"))->toBeTrue()
-        ->and($binary)->toContain("micro.php_binary=./star-gazer-bin\nextension_dir=lib\nextension=appkit.so\n")
-        ->and(file_get_contents($app.'/Contents/MacOS/lib/appkit.so'))->toBe('APPKIT')
+    expect(file_get_contents($app.'/Contents/MacOS/star-gazer'))->toBe('BINARY')
+        ->and(file_get_contents($app.'/Contents/Resources/star-gazer.phar'))->toContain("'rocket', 'stargazer'")
         ->and(file_get_contents($app.'/Contents/Info.plist'))->toContain('<string>2.0.0</string>')
-        ->and($this->commands)->toBe([['codesign', '--force', '--sign', '-', $app]])
+        ->and(file_get_contents($dmg))->toBe('DMG')
+        ->and($tester->getDisplay())->toContain('star-gazer-2.0.0-macos-arm64.dmg')
+        ->and($tester->getDisplay())->toContain('Not notarized: signed ad hoc')
+        ->and($this->mac->configure)->toContain("--enable-appkit\n")
+        ->and($this->mac->commands)->toContain(['codesign', '--verify', '--strict', '--deep', '--verbose=2', $app])
         ->and(file_get_contents($this->root.'/app/build/.gitignore'))->toBe("*\n");
-
-    $phar = substr($binary, strpos($binary, '<?php'));
-    expect($phar)->toContain("'rocket', 'stargazer'");
 });
 
 it('takes the interview defaults on Enter and a name argument over them', function () {
     Prompt::fake([Key::ENTER, Key::ENTER, 'A <a@b.c>', Key::ENTER, 'Sky', Key::ENTER, Key::ENTER]);
-    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+    $tester = new CommandTester(($this->command)());
 
     $exit = $tester->execute(['name' => 'Night Sky', '--dir' => $this->root.'/app']);
 
@@ -107,13 +109,14 @@ it('takes the interview defaults on Enter and a name argument over them', functi
         ->and(is_dir($this->root.'/app/build/Night Sky.app'))->toBeTrue()
         ->and(file_get_contents($this->root.'/app/build/Night Sky.app/Contents/Info.plist'))->toContain('<string>com.venusian.app</string>');
 
-    expect(json_decode(file_get_contents($this->root.'/app/build.json'), true))->toMatchArray(['id' => 'com.venusian.app', 'name' => 'Night Sky', 'author' => 'A <a@b.c>', 'summary' => 'Sky']);
+    expect(json_decode(file_get_contents($this->root.'/app/build.json'), true))->toMatchArray(['id' => 'com.venusian.app', 'name' => 'Night Sky', 'author' => 'A <a@b.c>', 'summary' => 'Sky'])
+        ->and($this->config->macos())->toBe(['sign' => 'adhoc', 'notary_profile' => null]);
 });
 
 it('builds a .deb on a Linux host and asks no signing question', function () {
     file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'version' => '2.0.0', 'targets' => ['linux-x86_64']]));
     Prompt::fake([Key::ENTER, Key::ENTER, 'A <a@b.c>', Key::ENTER, 'Sky', Key::ENTER]);
-    $tester = new CommandTester(new BuildCommand(($this->make)('linux-x86_64', [($this->deb)()]), new Interview));
+    $tester = new CommandTester(($this->command)(($this->make)('linux-x86_64', [($this->deb)()])));
 
     expect($tester->execute(['--dir' => $this->root.'/app']))->toBe(0, $tester->getDisplay())
         ->and(file_get_contents($this->root.'/app/build/star-gazer_2.0.0_amd64.deb'))->toBe('DEBFILE')
@@ -124,16 +127,16 @@ it('builds a .deb on a Linux host and asks no signing question', function () {
 
 it('builds the available targets when build.json lists both OSes, and says why the other waits', function () {
     file_put_contents($this->root.'/app/build.json', json_encode(['version' => '2.0.0', 'author' => 'A <a@b.c>', 'targets' => ['macos-arm64', 'linux-x86_64']]));
-    $tester = new CommandTester(new BuildCommand(($this->make)('macos-arm64', [($this->deb)()], 'Linux'), new Interview));
+    $tester = new CommandTester(($this->command)(($this->make)('macos-arm64', [($this->deb)()], 'Linux')));
 
     expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(0, $tester->getDisplay())
-        ->and($tester->getDisplay())->toContain('Skipping macos-arm64: macos-arm64 builds run on a Mac')
+        ->and($tester->getDisplay())->toContain('Skipping macos-arm64: macos-arm64 builds run on an Apple Silicon Mac')
         ->and(is_file($this->root.'/app/build/star-gazer_2.0.0_amd64.deb'))->toBeTrue();
 });
 
 it('refuses a target no wired target builds', function () {
     file_put_contents($this->root.'/app/build.json', json_encode(['extensions' => ['appkit'], 'targets' => ['linux-arm64']]));
-    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+    $tester = new CommandTester(($this->command)());
 
     expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
         ->and($tester->getDisplay())->toContain('Target linux-arm64 is not one venusian build knows: macos-arm64.');
@@ -141,14 +144,14 @@ it('refuses a target no wired target builds', function () {
 
 it('refuses a target it does not know', function () {
     file_put_contents($this->root.'/app/build.json', json_encode(['targets' => ['windows-x86_64']]));
-    $tester = new CommandTester(new BuildCommand($this->build, new Interview));
+    $tester = new CommandTester(($this->command)());
 
     expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
         ->and($tester->getDisplay())->toContain('build.json targets: windows-x86_64 is not one of macos-arm64, linux-arm64, linux-x86_64');
 });
 
 it('refuses a machine it has no target for', function () {
-    $tester = new CommandTester(new BuildCommand(($this->make)('macos-x86_64'), new Interview));
+    $tester = new CommandTester(($this->command)(($this->make)('macos-x86_64')));
 
     expect($tester->execute(['--dir' => $this->root.'/app'], ['interactive' => false]))->toBe(1)
         ->and($tester->getDisplay())->toContain('Target macos-x86_64 is not one venusian build knows: macos-arm64.');

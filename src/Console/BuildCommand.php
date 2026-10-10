@@ -2,6 +2,7 @@
 
 namespace Venusian\Build\Console;
 
+use Closure;
 use FilesystemIterator;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -14,6 +15,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
 use Venusian\Build\App\AppInspector;
 use Venusian\Build\App\BuildJson;
@@ -22,13 +24,13 @@ use Venusian\Build\Build;
 use Venusian\Build\Hosts\Docker;
 use Venusian\Build\Hosts\UserConfig;
 use Venusian\Build\Phar\PharBuilder;
-use Venusian\Build\Runtime\GitHubReleases;
-use Venusian\Build\Runtime\MicroCombiner;
-use Venusian\Build\Runtime\RuntimeStore;
+use Venusian\Build\Runtime\MacLibraries;
+use Venusian\Build\Runtime\MacRuntime;
 use Venusian\Build\Sources\Sources;
 use Venusian\Build\Targets\CodeSigner;
 use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
+use Venusian\Build\Targets\MacDiskImage;
 use Venusian\Build\Targets\MacTarget;
 
 use function Laravel\Prompts\error;
@@ -45,6 +47,8 @@ class BuildCommand extends Command
     public function __construct(
         private ?Build $build = null,
         private ?Interview $interview = null,
+        private readonly ?UserConfig $config = null,
+        private readonly ?Closure $keychain = null,
     ) {
         parent::__construct();
     }
@@ -82,7 +86,13 @@ class BuildCommand extends Command
 
             intro("Building {$manifest->name}");
             $build = $this->build ?? self::services();
-            $asked = ($this->interview ?? new Interview)->ask($manifest, $input->isInteractive(), $build->signs($manifest));
+            $interview = $this->interview ?? new Interview;
+            $asked = $interview->ask($manifest, $input->isInteractive());
+            $config = $this->config ?? new UserConfig(getenv('HOME') ?: sys_get_temp_dir());
+
+            if (Interview::asksSigning($input->isInteractive(), $build->signs($manifest), $config)) {
+                $interview->signing($config, Interview::identities(($this->keychain ?? self::keychain(...))()));
+            }
 
             if ($input->isInteractive()) {
                 (new BuildJson($dir))->write(Interview::answers($read, $asked));
@@ -109,19 +119,49 @@ class BuildCommand extends Command
     public static function services(): Build
     {
         $files = new Filesystem;
-        $run = static function (array $command, ?string $cwd = null): void {
-            (new Process($command, $cwd))->setTimeout(600)->mustRun();
+        $exec = static function (array $command, ?string $cwd = null): array {
+            $process = new Process($command, $cwd);
+            $process->setTimeout(null);
+            $process->run();
+
+            return [(int) $process->getExitCode(), $process->getOutput(), $process->getErrorOutput()];
+        };
+        $run = static function (array $command, ?string $cwd = null) use ($exec): string {
+            [$code, $out, $err] = $exec($command, $cwd);
+
+            if ($code !== 0) {
+                throw new RuntimeException(basename($command[0]).' '.basename($command[1] ?? '')." failed:\n".trim($err !== '' ? $err : $out));
+            }
+
+            return $out;
         };
         $home = getenv('HOME') ?: sys_get_temp_dir();
         $sources = Sources::real("{$home}/.venusian/build/sources");
         $docker = Docker::real();
-        $hosts = (new UserConfig($home))->hosts();
+        $config = new UserConfig($home);
+        $mac = "{$home}/.venusian/build/macos";
 
         return new Build(new PharBuilder(PHP_BINARY, $files), [
-            new MacTarget(new RuntimeStore("{$home}/.venusian/build/runtimes", new GitHubReleases, new MicroCombiner), new MicroCombiner, new MacAppBundle($files, $run), new CodeSigner($run)),
-            new DebTarget('x86_64', $sources, $docker, $hosts),
-            new DebTarget('arm64', $sources, $docker, $hosts),
+            new MacTarget(
+                new MacRuntime($sources, new MacLibraries($mac, $run), $run, "{$mac}/runtimes"),
+                new MacAppBundle($files, $run),
+                new CodeSigner($run),
+                new MacDiskImage($files, $exec),
+                $config,
+                fn (string $tool): bool => (new ExecutableFinder)->find($tool) !== null,
+            ),
+            new DebTarget('x86_64', $sources, $docker, $config->hosts()),
+            new DebTarget('arm64', $sources, $docker, $config->hosts()),
         ]);
+    }
+
+    /** `security find-identity -v -p codesigning`: the keychain's signing identities. */
+    private static function keychain(): string
+    {
+        $process = new Process(['security', 'find-identity', '-v', '-p', 'codesigning']);
+        $process->run();
+
+        return $process->getOutput();
     }
 
     private static function size(string $path): int

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Lays out and builds the .deb. Inputs in /work/in/deb: control (without Depends),
 # kebab, id, arch, version, app.phar, optional desktop, metainfo.xml, icon.png + icon.size,
-# copyright. The binary is /work/out/venusian. Output: /work/out/<kebab>_<version>_<arch>.deb
+# copyright, depends (comma-separated run-time packages, may be empty). The binary is
+# /work/out/venusian. Output: /work/out/<kebab>_<version>_<arch>.deb
 set -eu
 cd /work
 D=in/deb
@@ -33,7 +34,9 @@ if [ -f $D/icon.png ]; then
     done
 fi
 
-# Depends from what the binary links: dpkg-shlibdeps wants a debian/control beside it.
+# Depends from what the binary links: dpkg-shlibdeps wants a debian/control beside it, and the
+# libraries of declared build packages the image lacks, which this container installs again.
+sh /work/apt-build.sh
 mkdir -p pkg/debian
 printf 'Source: %s\nMaintainer: venusian build <build@venusian.local>\n\nPackage: %s\nArchitecture: %s\nDescription: %s\n' "$KEBAB" "$KEBAB" "$ARCH" "$KEBAB" > pkg/debian/control
 (cd pkg && dpkg-shlibdeps -O "$KEBAB/usr/lib/$KEBAB/$KEBAB") > pkg/shlibs 2> pkg/shlibs.err || { cat pkg/shlibs.err >&2; exit 1; }
@@ -41,6 +44,37 @@ DEPENDS=$(sed -n 's/^shlibs:Depends=//p' pkg/shlibs)
 rm -rf pkg/debian
 
 cp $D/control "$ROOT/DEBIAN/control"
+# Ubuntu 24.04 names its 64-bit time_t libraries <name>t64; Debian 13 kept some of those and
+# went back to <name> for others (libqt6gui6). Each t64 entry takes the plain name as its alternative.
+# Every alternative of every entry is looked at; only a name that ends in t64 gains one.
+set -f
+ALL=""
+OLDIFS=$IFS
+IFS=','
+for ENTRY in $DEPENDS; do
+    IFS='|'
+    ONE=""
+    for A in $ENTRY; do
+        A=$(printf '%s' "$A" | sed 's/^ *//; s/ *$//')
+        NAME=${A%% *}
+        ONE="${ONE:+$ONE | }$A"
+        case $NAME in
+            *t64) ONE="$ONE | ${NAME%t64}${A#"$NAME"}" ;;
+        esac
+    done
+    IFS=','
+    ALL="${ALL:+$ALL, }$ONE"
+done
+IFS=$OLDIFS
+set +f
+DEPENDS=$ALL
+# Declared run-time packages join Depends unless dpkg-shlibdeps already named them.
+for P in $(tr ',' ' ' < $D/depends); do
+    case ", $DEPENDS," in
+        *", $P "* | *", $P,"*) ;;
+        *) DEPENDS="${DEPENDS:+$DEPENDS, }$P" ;;
+    esac
+done
 printf 'Depends: %s\nInstalled-Size: %s\n' "$DEPENDS" "$(du -sk "$ROOT" | cut -f1)" >> "$ROOT/DEBIAN/control"
 chmod 0755 "$ROOT/DEBIAN"
 

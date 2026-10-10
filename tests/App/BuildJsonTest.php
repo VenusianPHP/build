@@ -30,7 +30,8 @@ it('merges the file over the defaults and tolerates $schema', function () {
     expect($values['id'])->toBe('com.venusian.stargazer')
         ->and($values['version'])->toBe('1.2.0')
         ->and($values['targets'])->toBe(['linux-arm64'])
-        ->and($values['sign'])->toBe('adhoc');
+        ->and($values['build'])->toBe(1)
+        ->and($values['permissions'])->toBe([]);
 });
 
 it('refuses an unknown key by name', function () {
@@ -79,4 +80,43 @@ it('creates the file on write when there was none', function () {
     (new BuildJson($this->root))->write(['name' => 'Stargazer']);
 
     expect(json_decode(file_get_contents($this->root.'/build.json'), true)['name'])->toBe('Stargazer');
+});
+
+it('says where sign, php and repository went', function (string $key, string $message) {
+    file_put_contents($this->root.'/build.json', json_encode([$key => 'x']));
+
+    expect(fn () => (new BuildJson($this->root))->read())->toThrow(RuntimeException::class, $message);
+})->with([
+    ['sign', 'build.json sign moved to ~/.venusian/build/config.json as macos.sign'],
+    ['php', 'build.json php is gone: macOS builds compile their PHP'],
+    ['repository', 'build.json repository is gone: macOS builds compile their PHP'],
+]);
+
+it('takes a build number and permissions', function () {
+    file_put_contents($this->root.'/build.json', '{"build": 42, "permissions": {"camera": "Shows the sky through the webcam"}}');
+
+    $values = (new BuildJson($this->root))->read();
+
+    expect($values['build'])->toBe(42)->and($values['permissions'])->toBe(['camera' => 'Shows the sky through the webcam']);
+});
+
+it('refuses a bad build number, permission or category by name', function (string $json, string $message) {
+    file_put_contents($this->root.'/build.json', $json);
+
+    expect(fn () => (new BuildJson($this->root))->read())->toThrow(RuntimeException::class, $message);
+})->with([
+    ['{"build": 0}', 'build.json build must be a whole number of at least 1.'],
+    ['{"build": "42"}', 'build.json build must be a whole number of at least 1.'],
+    ['{"permissions": ["camera"]}', 'build.json permissions must be an object of permission: the sentence macOS shows when it asks.'],
+    ['{"permissions": {"location": "x"}}', 'build.json permissions: location is not one of camera, microphone, bluetooth.'],
+    ['{"permissions": {"camera": ""}}', 'build.json permissions: camera needs the sentence macOS shows when it asks.'],
+    ['{"category": "Games"}', 'build.json category Games is not a freedesktop main category: AudioVideo, Development, Education, Game, Graphics, Network, Office, Science, Settings, System, Utility.'],
+]);
+
+it('has a schema that describes exactly the keys it reads', function () {
+    $schema = json_decode(file_get_contents(__DIR__.'/../../schema/build.schema.json'), true, flags: JSON_THROW_ON_ERROR);
+
+    expect(array_keys($schema['properties']))->toEqualCanonicalizing(['$schema', ...array_keys(BuildJson::DEFAULTS)])
+        ->and($schema['properties']['category']['enum'])->toBe(BuildJson::CATEGORIES)
+        ->and(array_keys($schema['properties']['permissions']['properties']))->toBe(BuildJson::PERMISSIONS);
 });

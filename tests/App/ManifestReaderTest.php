@@ -26,8 +26,8 @@ it('reads name, id, version, sketch and extensions', function () {
         ->and($manifest->sketch)->toBe('stargazer')
         ->and($manifest->sketches)->toBe(['stargazer'])
         ->and($manifest->extensions)->toBe(['appkit', 'ctype', 'imgdec', 'mbstring'])
-        ->and($manifest->repository)->toBe('phpacker/php-bin')
-        ->and($manifest->sign)->toBe('adhoc')
+        ->and($manifest->build)->toBe(1)
+        ->and($manifest->permissions)->toBe([])
         ->and($manifest->targets)->toBe([])
         ->and($manifest->windowed)->toBeTrue()
         ->and($manifest->base_path)->toBe($this->root);

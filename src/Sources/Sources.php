@@ -8,15 +8,18 @@ use Symfony\Component\Filesystem\Filesystem;
 use Throwable;
 
 /**
- * The source archives a Linux build compiles: php-src from php.net, the
- * Venusian SAPI tag from GitHub, each extension's latest tagged release from
- * Packagist. Cached under <cache>/{php-src,sapi,ext}; fetched once.
+ * The source archives a build compiles: php-src from php.net, the
+ * Venusian SAPI tag from GitHub, each extension's archive on the build's line
+ * from Packagist. Cached under <cache>/{php-src,sapi,ext}; fetched once.
  */
 final class Sources
 {
     public const PHP = '8.4.26';
 
-    public const SAPI = 'v0.10.1';
+    public const SAPI = 'v0.10.2';
+
+    /** The line every extension is taken from: its LINE.x-dev branch, else its newest LINE tag. */
+    public const LINE = '0.10';
 
     private const VENDOR = 'php-io-extensions';
 
@@ -43,38 +46,107 @@ final class Sources
     }
 
     /**
-     * os_families and os_families_exclude come from php-ext as declared; an empty os_families means every OS.
+     * The extension on the build's line: the LINE.x-dev branch, where the work lands ahead of
+     * the tags, else the newest LINE tag. The reference is the commit, so a moved branch is a
+     * new archive and a new runtime. os_families and os_families_exclude come from php-ext as
+     * declared; an empty os_families means every OS. apt_* come from extra.venusian.system.apt:
+     * build packages for the image, depends and recommends for what the binary loads at run
+     * time and dpkg-shlibdeps cannot see.
      *
-     * @return array{path: string, version: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>}
+     * @return array{path: string, version: string, reference: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}
      */
     public function extension(string $name): array
     {
         $package = self::VENDOR."/{$name}";
-
-        try {
-            $index = json_decode(($this->get)("https://repo.packagist.org/p2/{$package}.json"), true, flags: JSON_THROW_ON_ERROR);
-        } catch (Throwable $e) {
-            throw new RuntimeException("{$package} is not on Packagist ({$e->getMessage()}); tag and publish it, or drop {$name} from the app.");
+        $branch = $this->index("{$package}~dev", $package);
+        $release = null;
+        foreach (self::entries($branch, $package) as $entry) {
+            if (($entry['version'] ?? null) === self::LINE.'.x-dev') {
+                $release = $entry;
+                break;
+            }
         }
 
-        $release = $index['packages'][$package][0] ?? throw new RuntimeException("{$package} has no tagged release on Packagist.");
+        if ($release === null) {
+            $tags = $this->index($package, $package);
+            if ($branch === null && $tags === null) {
+                throw new RuntimeException("{$package} is not on Packagist; tag and publish it, or drop {$name} from the app.");
+            }
+            $line = array_filter(self::entries($tags, $package), fn (array $entry): bool => (bool) preg_match('/^v?'.preg_quote(self::LINE, '/').'\.\d+$/', (string) ($entry['version'] ?? '')));
+            usort($line, fn (array $a, array $b): int => version_compare(ltrim((string) $b['version'], 'v'), ltrim((string) $a['version'], 'v')));
+            $release = $line[0] ?? throw new RuntimeException("{$package} has no ".self::LINE.'.x-dev branch and no '.self::LINE." tag on Packagist; publish one, or drop {$name} from the app.");
+        }
+
         $version = (string) $release['version'];
         $meta = $release['php-ext'] ?? null;
 
-        if (! is_array($meta)) {
+        if (! is_array($meta) || $meta === []) {
             throw new RuntimeException("{$package} {$version} declares no php-ext build metadata in composer.json.");
         }
 
+        $reference = (string) ($release['dist']['reference'] ?? $release['source']['reference'] ?? $version);
         $flag = $meta['configure-options'][0]['name'] ?? "enable-{$name}";
+        $apt = (array) ($release['extra']['venusian']['system']['apt'] ?? []);
 
         return [
-            'path' => $this->fetch((string) $release['dist']['url'], "ext/{$name}-{$version}.zip"),
+            'path' => $this->fetch((string) $release['dist']['url'], "ext/{$name}-{$version}-".substr($reference, 0, 12).'.zip'),
             'version' => $version,
+            'reference' => $reference,
             'build_path' => trim((string) ($meta['build-path'] ?? ''), '/') ?: '.',
             'configure' => '--'.ltrim($flag, '-'),
             'os_families' => array_values((array) ($meta['os-families'] ?? [])),
             'os_families_exclude' => array_values((array) ($meta['os-families-exclude'] ?? [])),
+            'apt_build' => array_values((array) ($apt['build'] ?? [])),
+            'apt_depends' => array_values((array) ($apt['depends'] ?? [])),
+            'apt_recommends' => array_values((array) ($apt['recommends'] ?? [])),
         ];
+    }
+
+    /**
+     * A p2 index, or null when Packagist has none under that name (404). Any other failure
+     * stops the build: reading it as "no branch" would quietly build an older tag.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function index(string $name, string $package): ?array
+    {
+        try {
+            return json_decode(($this->get)("https://repo.packagist.org/p2/{$name}.json"), true, flags: JSON_THROW_ON_ERROR);
+        } catch (NotFound) {
+            return null;
+        } catch (Throwable $e) {
+            throw new RuntimeException("Cannot reach Packagist for {$package}: {$e->getMessage()}", previous: $e);
+        }
+    }
+
+    /**
+     * A p2 index's entries, expanded. Packagist lists newest first and, under "minified":
+     * "composer/2.0", gives each later entry only what changed from the one before it
+     * ("__unset" removes a key).
+     *
+     * @param  array<string, mixed>|null  $index
+     * @return list<array<string, mixed>>
+     */
+    private static function entries(?array $index, string $package): array
+    {
+        $minified = ($index['minified'] ?? null) === 'composer/2.0';
+        $previous = [];
+        $entries = [];
+
+        foreach ((array) ($index['packages'][$package] ?? []) as $entry) {
+            $full = $minified ? $previous : [];
+            foreach ((array) $entry as $key => $value) {
+                if ($value === '__unset') {
+                    unset($full[$key]);
+                } else {
+                    $full[$key] = $value;
+                }
+            }
+            $previous = $full;
+            $entries[] = $full;
+        }
+
+        return $entries;
     }
 
     private function fetch(string $url, string $relative): string
@@ -131,11 +203,21 @@ final class Sources
         return $length;
     }
 
-    /** The real fetchers: PHP streams with a User-Agent, as GitHubReleases does. */
+    /** The real fetchers: PHP streams with a User-Agent. */
     public static function real(string $cache): self
     {
         $context = fn () => stream_context_create(['http' => ['header' => "User-Agent: Venusian Build\r\n", 'follow_location' => 1]]);
-        $get = fn (string $url): string => file_get_contents($url, false, $context()) ?: throw new RuntimeException("Cannot reach {$url}");
+        // A 404 is an answer (no branch index, say): NotFound, not a warning. Anything else is no answer.
+        $get = function (string $url) use ($context): string {
+            $body = @file_get_contents($url, false, $context());
+            if ($body !== false) {
+                return $body;
+            }
+            $status = array_values(array_filter(http_get_last_response_headers() ?? [], fn (string $h): bool => str_starts_with($h, 'HTTP/')));
+            $why = $status !== [] ? end($status) : trim(preg_replace('/^.*: /', '', error_get_last()['message'] ?? 'no answer'));
+
+            throw str_contains($why, ' 404') ? new NotFound("{$url}: {$why}") : new RuntimeException("Cannot reach {$url}: {$why}");
+        };
         $download = function (string $url, string $path) use ($context): void {
             $in = fopen($url, 'rb', false, $context()) ?: throw new RuntimeException("Cannot download {$url}");
             $length = self::contentLength((array) (stream_get_meta_data($in)['wrapper_data'] ?? []));

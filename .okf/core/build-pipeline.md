@@ -3,7 +3,7 @@ type: Concept
 title: Build pipeline
 description: The steps of `venusian build` in order, the class behind each, and what each target does with the phar.
 resource: src/Build.php
-tags: [build, pipeline, phar, phpmicro, codesign, linux, deb, docker]
+tags: [build, pipeline, phar, sapi, codesign, notarization, macos, linux, deb, docker]
 status: draft
 generated: { by: "claude-fable-5-1", at: "2026-10-08T00:00:00Z" }
 sources:
@@ -32,14 +32,17 @@ sources:
     resource: src/Targets/Target.php
     title: Target, MacTarget, DebTarget
   - id: runtime
-    resource: src/Runtime/RuntimeStore.php
-    title: RuntimeStore
+    resource: src/Runtime/MacRuntime.php
+    title: MacRuntime and MacLibraries
   - id: ext
-    resource: src/Extensions/ExtensionBundle.php
-    title: PhpFinder and ExtensionBundle
-  - id: combine
-    resource: src/Runtime/MicroCombiner.php
-    title: MicroIni and MicroCombiner
+    resource: src/Extensions/ExtensionSet.php
+    title: ExtensionSet
+  - id: macenv
+    resource: build-env/macos/recipe.sh
+    title: build-env/macos libs.sh and recipe.sh
+  - id: dmg
+    resource: src/Targets/MacDiskImage.php
+    title: MacDiskImage
   - id: bundle
     resource: src/Targets/MacAppBundle.php
     title: MacAppBundle and CodeSigner
@@ -66,26 +69,26 @@ sources:
 
 | | `MacTarget` | `DebTarget` |
 |---|---|---|
-| Available | on a Mac | a docker context of the target's CPU: the one `~/.venusian/build/config.json` names, else the current context[^hosts] |
-| PHP | php-bin NTS `micro.sfx`, `.so` files from `PhpFinder::nts()`[^runtime][^ext] | php-src 8.4.26 + Venusian SAPI v0.10.1, extensions compiled in, in `ghcr.io/venusianphp/build-env:ubuntu24.04`[^deb][^recipe] |
-| Platform extensions | kqueue, pcurl when present | epoll, pcurl always (base set) |
-| Output | signed `build/<Name>.app` | `build/<kebab>_<version>_<arch>.deb` |
-| Interview asks signing | yes | no |
+| Available | on an Apple Silicon Mac with xcrun, cmake, autoconf, pkg-config | a docker context of the target's CPU: the one `~/.venusian/build/config.json` names, else the current context[^hosts] |
+| PHP | php-src 8.4.26 + Venusian SAPI, extensions compiled in, natively at macOS 14 against `~/.venusian/build/macos/prefix-14.0-<hash>`[^runtime][^macenv] | php-src 8.4.26 + Venusian SAPI v0.10.2, extensions compiled in, in `ghcr.io/venusianphp/build-env:ubuntu24.04-<hash>` (GLFW 3.4, SDL3 and libjpeg-turbo static; Vulkan headers 1.4.309)[^deb][^recipe] |
+| Platform extensions | kqueue, pcurl always (base set); gtk and qt left out | epoll, pcurl always (base set) |
+| Output | `build/<Name>.app` and `build/<kebab>-<version>-macos-arm64.dmg`, notarized with a Developer ID and a profile[^bundle][^dmg] | `build/<kebab>_<version>_<arch>.deb` |
+| Interview asks signing | once per machine, saved to the per-user config | no |
 
 # Steps
 
 | # | Step | Class | Pinned by |
 |---|---|---|---|
 | 1 | Refuse unless `composer.json` requires `venusian/framework`, `computer` and `bootstrap/app.php` exist | `AppInspector`[^inspector] | `AppInspectorTest`, `BuildCommandTest` refusal |
-| 2 | `build.json` over defaults; unknown key, non-reverse-DNS id, unknown target, version not starting with a digit, invalid JSON → refused by name | `BuildJson`[^buildjson] | `BuildJsonTest` |
+| 2 | `build.json` over defaults; unknown key, non-reverse-DNS id, unknown target, version not starting with a digit, invalid JSON, `sign`/`php`/`repository` (moved), build < 1, category or permission outside the lists → refused by name | `BuildJson`[^buildjson] | `BuildJsonTest` |
 | 3 | Manifest: `app.name`, `app.id` (missing → told to add it; differs from `build.json` `id` → the pissy error), sketches, `ext-*` from `composer.lock`, windowed = a `jovian/*` package in the lock; evaluated in a child PHP with `env()` reading `.env`; packaged `.env` = the app's `.env`, `build.env` over it, less `build.env_except`, `APP_ID` always | `ManifestReader`[^reader] | `ManifestReaderTest` |
-| 4 | Interview: name, version, sketch (when several), author and summary while empty, signing when a buildable target signs; defaults stand without a terminal; the id never asked; changed answers plus the id written back to `build.json` | `Interview`[^interview], `BuildCommand`[^command] | `InterviewTest`, `BuildCommandTest` |
+| 4 | Interview: name, version, sketch (when several), author and summary while empty, then, once per machine with a terminal and a signing target, how macOS builds sign (Developer ID from the keychain, notarytool profile) into ~/.venusian/build/config.json; defaults stand without a terminal; the id never asked; changed answers plus the id written back to `build.json` | `Interview`[^interview], `BuildCommand`[^command] | `InterviewTest`, `BuildCommandTest` |
 | 5 | Phar, once: stage without `vendor storage tests build .git .idea .vscode .zed bootstrap/cache node_modules .env* *.log`; `composer install --no-dev`; writable skeleton; metadata `name id version sketch`; stub runs `rocket <sketch>`, or a script inside the phar named as the first argument (pool workers) | `PharBuilder`[^phar] | `PharBuilderTest`, `BuildTest` |
-| 6 | macOS: runtime from the latest `repository` release cached under `~/.venusian/build/runtimes`; `.so` per wanted extension the runtime lacks plus kqueue/pcurl; sfx + `\xfd\xf6\x69\xe6` + `pack('N', len)` + ini + phar; `<Name>.app`; `codesign` ad hoc, or identity on the runtime image, each `.so`, then the bundle under `--options runtime`, never `--deep` | `MacTarget`[^target], `RuntimeStore`[^runtime], `ExtensionBundle`[^ext], `MicroCombiner`[^combine], `MacAppBundle`/`CodeSigner`[^bundle] | `RuntimeStoreTest`, `ExtensionBundleTest`, `MicroCombinerTest`, `MacAppBundleTest`, `BuildCommandTest` |
-| 7 | Linux, resolve: base ctype, filter, mbstring, openssl, pdo, epoll, pcurl, then the app's, then `PHP_ADD_EXTENSION_DEP` needs (pcurl → curl, epoll → sockets, dom → libxml…), in that queue order; core names → `DebTarget::CORE` flags; others → latest tagged `php-io-extensions/<name>` on Packagist (p2 first entry), `php-ext` `build-path` and first configure option; `os-families` without linux or `os-families-exclude` with it → left out and reported; set hash = sha1 of PHP version, SAPI tag, zts, flags, extension versions | `DebTarget`[^deb], `Sources`[^sources] | `DebTargetTest`, `SourcesTest` |
-| 8 | Linux, host: image present, else pulled, else built from `build-env/` sent as a tar on stdin; volume `venusian-build-<kebab>` cleared of `in out pkg`; one tar of `recipe.sh`, `package.sh`, `in/` (sources, `set.hash`, `php.version`, `configure.args`, `extensions.list`, `deb/` metadata, phar) pushed into it | `DebTarget`[^deb], `Docker`[^hosts] | `DebTargetTest`, `DockerTest` |
-| 9 | Linux, compile: `recipe.sh` reuses `build/<hash>` when its hash matches, else replaces the volume's tree: php-src, SAPI into `sapi/venusian`, each extension's build path into `ext/<name>`, `buildconf --force`, `configure`, `make -j`; failure tails on stderr | `recipe.sh`[^recipe] | `BuildEnvTest` (parse); the proof run |
-| 10 | Linux, package: `/usr/lib/<kebab>/{<kebab>,<kebab>.phar}`, `/usr/bin/<kebab>` symlink, copyright; windowed: `<id>.desktop`, hicolor `<size>/apps/<id>.png`, `<id>.metainfo.xml`; Depends from `dpkg-shlibdeps`; `dpkg-deb --root-owner-group`; fetched into `build/` | `package.sh`[^recipe], `DebTarget`[^deb] | `DebTargetTest` control, desktop, metainfo |
+| 6 | macOS: `ExtensionSet` for darwin with the SDK path (iconv, bz2 from the SDK, ldap from the static OpenLDAP; gtk, qt left out; gettext, gmp, intl, pdo_pgsql, pgsql, sodium, tidy, zip refused); `libs.sh` once per pin set (`.complete` last); `recipe.sh` natively with the shell's compiler variables unset, refusing links outside `/System/Library/`, `/usr/lib/`, `@rpath/`, an rpath other than `@executable_path/../Frameworks`, objects built for a newer macOS and a minos other than 14.0; binary per app and set hash (SDK version included), renamed into place; `.app` with `Frameworks` for `@rpath` libraries plus MoltenVK and its ICD manifest; identity resolved to its certificate's SHA-1 before the compile; `codesign` each dylib then the bundle, hardened, then `--verify --strict --deep`; `.dmg`; with an identity: sign the `.dmg`, `notarytool submit --wait`, staple, `spctl --assess` | `MacTarget`[^target], `ExtensionSet`[^ext], `MacLibraries`/`MacRuntime`[^runtime], `MacAppBundle`/`CodeSigner`[^bundle], `MacDiskImage`[^dmg] | `ExtensionSetTest`, `MacLibrariesTest`, `MacRuntimeTest`, `MacScriptsTest`, `MacAppBundleTest`, `MacDiskImageTest`, `MacTargetTest`, `BuildCommandTest` |
+| 7 | Linux, resolve: base ctype, filter, mbstring, openssl, pdo, epoll, pcurl, then the app's, then `PHP_ADD_EXTENSION_DEP` needs (pcurl → curl, epoll → sockets, dom → libxml…), in that queue order; core names → `ExtensionSet::CORE` flags; others → `php-io-extensions/<name>` on the 0.10 line: the `0.10.x-dev` entry of the `~dev` p2 index, else the newest `v?0.10.N` tag (minified entries expanded), `php-ext` `build-path` and first configure option, `extra.venusian.system.apt` build/depends/recommends; `os-families` without linux or `os-families-exclude` with it → left out and reported; set hash = sha1 of image, PHP version, SAPI tag, zts, flags, each extension's version and commit | `ExtensionSet`[^ext], `DebTarget`[^deb], `Sources`[^sources] | `ExtensionSetTest`, `DebTargetTest`, `SourcesTest` |
+| 8 | Linux, host: image present, else pulled, else built from `build-env/` sent as a tar on stdin; volume `venusian-build-<kebab>` cleared of `in out pkg`; one tar of `recipe.sh`, `package.sh`, `apt-build.sh`, `in/` (sources, `set.hash`, `php.version`, `configure.args`, `extensions.list`, `apt.build`, `deb/` metadata with `depends`, phar) pushed into it | `DebTarget`[^deb], `Docker`[^hosts] | `DebTargetTest`, `DockerTest` |
+| 9 | Linux, compile: `recipe.sh` reuses `build/<hash>` when its hash matches, else runs `apt-build.sh` (installs the `in/apt.build` packages `dpkg -s` does not find), then replaces the volume's tree: php-src, SAPI into `sapi/venusian`, each extension's build path into `ext/<name>`, `buildconf --force`, `configure`, `make -j`; failure tails on stderr | `recipe.sh`[^recipe] | `BuildEnvTest` (parse); the proof run |
+| 10 | Linux, package: `/usr/lib/<kebab>/{<kebab>,<kebab>.phar}`, `/usr/bin/<kebab>` symlink, copyright; windowed: `<id>.desktop`, hicolor `<size>/apps/<id>.png`, `<id>.metainfo.xml`; `apt-build.sh` again (its own container); Depends from `dpkg-shlibdeps`, each `…t64` entry with its plain name as alternative, plus the `in/deb/depends` names it lacks, Recommends from the extensions; `dpkg-deb --root-owner-group`; fetched into `build/` | `package.sh`[^recipe], `DebTarget`[^deb] | `DebTargetTest` control, desktop, metainfo |
 
 Icons for a `.deb` are square PNGs of at least 16 px, checked before anything reaches the host; `package.sh` renders each hicolor size up to 512 the source covers. The image tag carries the Dockerfile's sha1 (12 hex), so a changed Dockerfile builds a new image on every host and joins the set hash. PHP's own extensions outside `CORE` that the image cannot build (`UNCOMPILED`, opcache among them: PHP 8.4 builds it only as a zend_extension) stop the build by name instead of going to Packagist. A `.deb` needs `author` as its maintainer.[^deb] Output: `<app>/build/`, `build/.gitignore` = `*`.[^build][^cmd-test]
 
@@ -97,9 +100,10 @@ Icons for a `.deb` are square PNGs of at least 16 px, checked before anything re
 [^interview]: Interview
 [^phar]: PharBuilder and pack.php
 [^target]: Target, MacTarget, DebTarget
-[^runtime]: RuntimeStore
-[^ext]: PhpFinder and ExtensionBundle
-[^combine]: MicroIni and MicroCombiner
+[^runtime]: MacRuntime and MacLibraries
+[^ext]: ExtensionSet
+[^macenv]: build-env/macos libs.sh and recipe.sh
+[^dmg]: MacDiskImage
 [^bundle]: MacAppBundle and CodeSigner
 [^sources]: Sources
 [^hosts]: Docker and UserConfig

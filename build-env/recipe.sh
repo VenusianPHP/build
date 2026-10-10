@@ -1,7 +1,8 @@
 #!/bin/sh
 # Compiles PHP with the Venusian SAPI and the app's extensions, once per set.
 # Inputs in /work/in: php-src.tar.xz, sapi.tar.gz, ext/<name>.zip, set.hash,
-# php.version, configure.args (one per line), extensions.list (name<TAB>build path).
+# php.version, configure.args (one per line), extensions.list (name<TAB>build path),
+# apt.build (one package per line).
 # Output: /work/out/venusian. A build dir whose set.hash matches is reused; a new
 # set replaces the old one, so an app's volume holds one compiled tree.
 # Failures print the log's tail on stderr, which docker hands back as the error.
@@ -17,6 +18,8 @@ if [ -x "$BUILD/php-src/sapi/venusian/venusian" ] && [ "$(cat "$BUILD/set.hash" 
     cp "$BUILD/php-src/sapi/venusian/venusian" out/venusian
     exit 0
 fi
+
+sh /work/apt-build.sh
 
 rm -rf build
 mkdir -p "$BUILD"
@@ -37,6 +40,11 @@ done < /work/in/extensions.list
 
 cd php-src
 ./buildconf --force > ../buildconf.log 2>&1 || { tail -20 ../buildconf.log >&2; exit 1; }
+# buildconf exits 0 when m4 fails on an extension's config.m4; --force removed the old configure first.
+if [ ! -x configure ]; then
+    tail -20 ../buildconf.log >&2
+    exit 1
+fi
 # shellcheck disable=SC2046
 ./configure $(tr '\n' ' ' < /work/in/configure.args) > ../configure.log 2>&1 || { tail -40 ../configure.log >&2; exit 1; }
 make -j"$(nproc)" > ../make.log 2>&1 || { grep -n -E "error:|Error [0-9]" ../make.log | head -40 >&2; exit 1; }

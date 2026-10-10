@@ -63,16 +63,46 @@ Facts 11 to 21, from the distribution design (2026-10-08 and 2026-10-09).[^dist]
     dependencies: symfony/var-dumper (HTML dumps otherwise, seen in the packaged app's log),
     error-handler, process, monolog, guzzle, whoops, collision. The framework's packaged mode
     keys off the phar base path, not the SAPI name.
-18. **Linux desktop identity is shared today.** `jovian/venusian-gtk` `GTKSession` and
-    `jovian/venusian-qt` `QtSession` default the application ID / desktop file name to
-    `org.venusian.Surface`; no config in surface, jovian or Stargazer overrides it. Docks match
-    a window to its `.desktop` file by that ID, so every Venusian app shows one generic entry.
+18. **Linux desktop identity is the app's own** (was shared as `org.venusian.Surface` until
+    2026-10-09). The GTK and Qt drivers read `config('app.id')` and refuse without it; the GTK
+    session sets GLib's program name to it, so X11 `WM_CLASS` matches the `.desktop` file's
+    `StartupWMClass` and the GNOME dock shows the app's icon (Stargazer, gaming PC).
 19. **Vendor weight.** Stargazer production vendor: 69 packages, 39.5 MB, of which 21.1 MB (54%)
     is tests, docs and non-PHP files; surface 12.8 MB and framework 10.3 MB lead because path
     repositories copy everything `export-ignore` would drop.
 20. **Debian tooling needs no manual dependency list.** `dpkg-shlibdeps` reads the shipped
     binaries and emits Depends with version floors (facts 11, 14).
 21. The SAPI binary realpaths its own location (PHP's `executable_location` handling), so a `.app` or `.deb` launcher may be a symlink and `PHP_BINARY` is still the real file; `mktemp` paths on macOS resolve through `/private`.
+22. **The 24.04 floor against the catalog** (build image, 2026-10-09): gtk4 4.14.5, Qt 6.4.2,
+    glfw3 3.3.10, sdl3 absent, vulkan 1.3.275, egl 1.5, glesv2 3.2, libftdi1 1.5, libusb 1.0.27,
+    libpng 1.6.43, libjpeg 2.1.5, libtiff 4.5.1, libcurl 8.5.0. ext-qt compiles against 6.4.2
+    except five `QEvent` enumerators in its value checks (DevicePixelRatioChange since 6.6;
+    ChildWindowAdded, ChildWindowRemoved, ParentWindowAboutToChange, ParentWindowChange since
+    6.7). ext-glfw misses 27 constants and 4 functions of GLFW 3.4, and jovian's GLFW driver
+    selects the platform through them; Ubuntu's 3.3 is X11-only. Dev machines: the Mac has SDL3
+    3.4.4 and GLFW 3.4.0, the Pi SDL3 3.4.9, GLFW 3.4.0, Qt 6.8.2. The Qt Wayland platform
+    plugin is the separate `qt6-wayland` package; the xcb plugin ships in `libqt6gui6t64`.
+23. **One `.deb` for Ubuntu 24.04 and Debian 13** (Qt Stargazer, 2026-10-09): of the 41
+    Depends and Recommends names an Ubuntu 24.04 build of the full catalog produces, Debian 13
+    has no installable `libjpeg8` (its libjpeg is `libjpeg62-turbo`, `.so.62`) and none of
+    `libqt6gui6t64`, `libqt6widgets6t64`, `libqt6openglwidgets6t64`: it ships those three as
+    `libqt6gui6`, `libqt6widgets6`, `libqt6openglwidgets6`, while keeping `t64` names elsewhere
+    (`libqt6core6t64`, `libssl3t64`, `libcurl4t64`). `apt-cache show` answers for a name that
+    only appears in other packages' relations; `apt-cache policy` shows no candidate. GLFW 3.4 names one Wayland protocol table without its `_glfw_` prefix
+    (`wp_fractional_scale_manager_v1_interface`), which SDL3 also defines. ext-vulkan's constants
+    need Vulkan headers 1.4.309; the 24.04 loader exports every core function it calls by name.
+24. **The macOS path** (M1 Pro, macOS 15.4.1, CLT SDK 15.4, 2026-10-09): library set (OpenSSL,
+    OpenLDAP client, Oniguruma, libjpeg-turbo, libpng, libtiff, GLFW, SDL3, libusb, libftdi
+    static; Vulkan loader and MoltenVK as dylibs) 190 s, 70 MB, once per pin set. Stargazer with
+    pdo_sqlite + imgdec: compile 100 s, 20 s reused, `.dmg` 30.1 MB. Full catalog: binary 32 MB,
+    `.app` 81 MB, `.dmg` 35 MB. Binary links `/System/Library/`, `/usr/lib/`, `@rpath/libvulkan`
+    only; minos 14.0. The SDK's LDAP is OpenLDAP 2.4.28, lacking `ldap_destroy` and the sort, VLV
+    and password-policy control functions PHP 8.4's ldap calls, so OpenLDAP 2.6.15 is built.
+    `hdiutil create -srcfolder` sized a 46 MB-phar image short 5 runs in 6 ("No space left on
+    device"); an explicit-size HFS+ image never did. Notarization with a Developer ID: Apple
+    accepted Stargazer and the full catalog first time, each within the build's run (390 s
+    and 201 s end to end); hardened runtime with `allow-jit` only, library validation on, and
+    the Vulkan pair signed by the same team loads.
 
 [^spec]: design spec, section "Measured facts"
 [^dist]: distribution design, section "Measured facts the design rests on"

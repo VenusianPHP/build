@@ -3,6 +3,7 @@
 use Symfony\Component\Filesystem\Filesystem;
 use Venusian\Build\App\Manifest;
 use Venusian\Build\Hosts\Docker;
+use Venusian\Build\Sources\NotFound;
 use Venusian\Build\Sources\Sources;
 use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Tests\Fakes\FakeDocker;
@@ -21,6 +22,7 @@ beforeEach(function () {
     file_put_contents($this->root.'/env/Dockerfile', 'FROM ubuntu:24.04');
     file_put_contents($this->root.'/env/recipe.sh', '#!/bin/sh');
     file_put_contents($this->root.'/env/package.sh', '#!/bin/sh');
+    file_put_contents($this->root.'/env/apt-build.sh', '#!/bin/sh');
     file_put_contents($this->root.'/app.phar', 'PHAR');
     // A 64x64 PNG: getimagesize reads the IHDR; the pixels need not be real.
     file_put_contents($this->root.'/app/art/icon.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAC0lEQVR4nGNgGAUAAAEAAVYYRdAAAAAASUVORK5CYII='));
@@ -31,7 +33,7 @@ beforeEach(function () {
 
     $this->manifest = Manifest::fromJson(json_encode([
         'name' => 'Star Gazer', 'id' => 'com.venusian.stargazer', 'version' => '1.2.0', 'sketch' => 'stargazer', 'sketches' => ['stargazer'],
-        'icon' => 'art/icon.png', 'extensions' => ['ctype', 'gtk', 'mbstring', 'pcurl', 'dom'], 'php' => null, 'repository' => 'phpacker/php-bin', 'sign' => 'adhoc',
+        'icon' => 'art/icon.png', 'extensions' => ['ctype', 'gtk', 'mbstring', 'pcurl', 'dom'],
         'targets' => ['linux-x86_64'], 'base_path' => $this->root.'/app', 'summary' => 'The sky, daily', 'description' => "NASA's picture of the day.\n\nAnd more.",
         'author' => 'Angel <a@b.c>', 'homepage' => 'https://venusian.dev', 'license' => 'MIT', 'category' => 'Education', 'windowed' => true,
     ]));
@@ -70,7 +72,7 @@ it('builds the image locally when the registry has none, pushes everything, comp
     expect(file_get_contents($in.'/php.version'))->toBe('8.4.26')
         ->and(file_get_contents($in.'/extensions.list'))->toBe("epoll\t.\npcurl\text\ngtk\t.\n")
         ->and(file_get_contents($in.'/configure.args'))->toBe(implode("\n", [
-            '--disable-all', '--disable-cli', '--disable-cgi', '--disable-phpdbg', '--enable-venusian', '--enable-phar',
+            '--disable-all', '--disable-cli', '--disable-cgi', '--disable-phpdbg', '--disable-rpath', '--enable-venusian', '--enable-phar',
             '--enable-ctype', '--enable-filter', '--enable-mbstring', '--with-openssl', '--enable-pdo', '--enable-epoll', '--enable-pcurl',
             '--enable-gtk', '--enable-dom', '--enable-sockets', '--with-curl', '--with-libxml',
         ])."\n")
@@ -83,9 +85,10 @@ it('builds the image locally when the registry has none, pushes everything, comp
         ->and(file_get_contents($in.'/deb/arch'))->toBe('amd64')
         ->and(file_get_contents($in.'/deb/icon.size'))->toBe('64')
         ->and(is_file($this->root.'/pushed-1/recipe.sh'))->toBeTrue()
+        ->and(is_file($this->root.'/pushed-1/apt-build.sh'))->toBeTrue()
         ->and(file_get_contents($in.'/deb/control'))->toBe(implode("\n", [
             'Package: star-gazer', 'Version: 1.2.0', 'Architecture: amd64', 'Maintainer: Angel <a@b.c>', 'Section: misc', 'Priority: optional',
-            'Homepage: https://venusian.dev', 'Description: The sky, daily', " NASA's picture of the day.", ' .', ' And more.',
+            'Homepage: https://venusian.dev', 'Recommends: libgtk-4-media-gstreamer', 'Description: The sky, daily', " NASA's picture of the day.", ' .', ' And more.',
         ])."\n")
         ->and(file_get_contents($in.'/deb/desktop'))->toBe(implode("\n", [
             '[Desktop Entry]', 'Type=Application', 'Name=Star Gazer', 'Comment=The sky, daily', 'Exec=/usr/bin/star-gazer', 'Icon=com.venusian.stargazer',
@@ -97,7 +100,8 @@ it('builds the image locally when the registry has none, pushes everything, comp
         ->and(file_get_contents($in.'/deb/copyright'))->toContain('License: MIT')
         ->and($this->fake->commands[6])->toBe(['docker', '--context', 'gamingpc', 'run', '--rm', '-v', 'venusian-build-star-gazer:/work', '-w', '/work', $this->image, 'sh', 'recipe.sh'])
         ->and($this->lines)->toContain('Building linux-x86_64 on docker context gamingpc')
-        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.1 and ctype, filter, mbstring, openssl, pdo, epoll, pcurl, gtk, dom, sockets, curl, libxml');
+        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.2 and ctype, filter, mbstring, openssl, pdo, epoll, pcurl, gtk, dom, sockets, curl, libxml')
+        ->and($this->lines)->toContain('From Packagist: epoll v0.10.0 (ref-epo), pcurl v0.10.0 (ref-pcu), gtk v0.10.0 (ref-gtk)');
 });
 
 it('hashes the set from the PHP version, SAPI tag, thread safety, flags and extension versions, the same twice', function () {
@@ -135,8 +139,38 @@ it('refuses an icon that is not square or not a hicolor size before pushing anyt
     ($this->target)('x86_64', ['linux-x86_64' => 'gamingpc'])->build($this->root.'/app.phar', $this->manifest, $this->root.'/build', $this->report);
 })->throws(RuntimeException::class, 'art/icon.png is a 64x32 PNG; the icon must be a square PNG of at least 16 px');
 
+it('hands the image the extensions\' apt build packages and the .deb their run-time packages', function () {
+    ($this->target)('x86_64', ['linux-x86_64' => 'gamingpc'])->build($this->root.'/app.phar', $this->manifest->with(['extensions' => ['gtk', 'qt']]), $this->root.'/build', $this->report);
+
+    $in = $this->root.'/pushed-1/in';
+    expect(file_get_contents($in.'/apt.build'))->toBe("libcurl4-openssl-dev\nlibgtk-4-dev\nqt6-base-dev\nqt6-multimedia-dev\n")
+        ->and(file_get_contents($in.'/deb/depends'))->toBe('qt6-wayland')
+        ->and(file_get_contents($in.'/deb/control'))->toContain("\nRecommends: libgtk-4-media-gstreamer\n");
+});
+
+it('writes no Recommends line and an empty depends file when no extension declares any', function () {
+    ($this->target)('x86_64', ['linux-x86_64' => 'gamingpc'])->build($this->root.'/app.phar', $this->manifest->with(['extensions' => []]), $this->root.'/build', $this->report);
+
+    expect(file_get_contents($this->root.'/pushed-1/in/deb/depends'))->toBe('')
+        ->and(file_get_contents($this->root.'/pushed-1/in/deb/control'))->not->toContain('Recommends:');
+});
+
+it('recompiles when an extension\'s branch moves, and reuses while the commit stays', function () {
+    $this->reference = 'one';
+    $sources = new Sources($this->root.'/cache', fn (string $url): string => str_replace('ref-gtk', $this->reference, FakeSources::packagist($url)), fn (string $url, string $path) => file_put_contents($path, 'A'));
+    $target = new DebTarget('x86_64', $sources, $this->docker, ['linux-x86_64' => 'gamingpc'], $this->root.'/env');
+
+    $target->build($this->root.'/app.phar', $this->manifest, $this->root.'/build', $this->report);
+    $target->build($this->root.'/app.phar', $this->manifest, $this->root.'/build', $this->report);
+    $this->reference = 'two';
+    $target->build($this->root.'/app.phar', $this->manifest, $this->root.'/build', $this->report);
+
+    $hash = fn (int $n): string => file_get_contents($this->root."/pushed-{$n}/in/set.hash");
+    expect($hash(1))->toBe($hash(2))->and($hash(3))->not->toBe($hash(1));
+});
+
 it('refuses an extension name it cannot compile', function () {
-    $sources = new Sources($this->root.'/cache', fn (string $url): string => str_contains($url, '/nope.json') ? throw new RuntimeException('404') : FakeSources::packagist($url), fn (string $url, string $path) => file_put_contents($path, 'A'));
+    $sources = new Sources($this->root.'/cache', fn (string $url): string => str_contains($url, '/nope') ? throw new NotFound('404') : FakeSources::packagist($url), fn (string $url, string $path) => file_put_contents($path, 'A'));
     $target = new DebTarget('x86_64', $sources, $this->docker, ['linux-x86_64' => 'gamingpc'], $this->root.'/env');
 
     $target->build($this->root.'/app.phar', $this->manifest->with(['extensions' => ['nope']]), $this->root.'/build', $this->report);

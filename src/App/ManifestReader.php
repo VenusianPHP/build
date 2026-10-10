@@ -57,9 +57,6 @@ final class ManifestReader
             sketches: $sketches,
             icon: $build['icon'],
             extensions: $extensions,
-            php: $build['php'],
-            repository: (string) $build['repository'],
-            sign: (string) $build['sign'],
             targets: array_values((array) $build['targets']),
             base_path: $this->app_dir,
             env: $env,
@@ -71,6 +68,8 @@ final class ManifestReader
             category: (string) $build['category'],
             zts: (bool) $build['zts'],
             windowed: $this->windowed($lock),
+            build: (int) $build['build'],
+            permissions: (array) $build['permissions'],
         );
     }
 

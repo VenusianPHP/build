@@ -93,7 +93,7 @@ final class PharBuilder
     private function installProductionVendor(string $stage): void
     {
         $process = new Process(
-            // Platform requirements are the runtime's business: micro plus the bundled .so files, not the PHP running composer.
+            // Platform requirements are the runtime's business: the compiled-in extensions, not the PHP running composer.
             [...$this->composer(), 'install', '--no-dev', '--no-interaction', '--no-scripts', '--no-plugins', '--optimize-autoloader', '--no-progress', '--no-ansi'],
             $stage,
             ['COMPOSER_NO_INTERACTION' => '1'],

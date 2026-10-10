@@ -4,3 +4,6 @@
 /.phpunit.result.cache
 /.idea/
 .DS_Store
+/deets/
+*.p8
+*.certSigningRequest

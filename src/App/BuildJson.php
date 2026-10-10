@@ -25,6 +25,7 @@ final class BuildJson
         'id' => null,            // reverse-DNS; must equal config/app.php app.id when set
         'name' => null,          // null uses app.name
         'version' => '0.1.0',
+        'build' => 1,            // whole number, one more each release: CFBundleVersion
         'sketch' => null,        // the only sketch, or asked when several
         'icon' => null,          // square PNG relative to the app
         'summary' => '',         // one line
@@ -33,14 +34,25 @@ final class BuildJson
         'homepage' => '',
         'license' => '',
         'category' => 'Utility', // freedesktop main category
+        'permissions' => [],     // macOS: permission => the sentence macOS shows when it asks
         'extensions' => [],      // ext names beyond what composer.lock declares
-        'zts' => false,          // thread-safe runtime on Linux
-        'php' => null,           // macOS: NTS PHP binary supplying .so files
-        'repository' => 'phpacker/php-bin', // macOS runtime source
-        'sign' => 'adhoc',       // macOS: or a codesign identity string
+        'zts' => false,          // thread-safe runtime (Linux and macOS)
         'targets' => [],         // [] = this machine
         'env' => [],
         'env_except' => [],
+    ];
+
+    /** freedesktop main categories; the .deb's Categories and the .app's LSApplicationCategoryType come from these. */
+    public const CATEGORIES = ['AudioVideo', 'Development', 'Education', 'Game', 'Graphics', 'Network', 'Office', 'Science', 'Settings', 'System', 'Utility'];
+
+    /** What an app may ask the user for on macOS: each carries a usage sentence in Info.plist. */
+    public const PERMISSIONS = ['camera', 'microphone', 'bluetooth'];
+
+    /** Keys earlier releases read, and where each went. */
+    private const MOVED = [
+        'sign' => 'sign moved to ~/.venusian/build/config.json as macos.sign: a signing identity belongs to the machine, not the app.',
+        'php' => 'php is gone: macOS builds compile their PHP, so no PHP binary supplies extensions.',
+        'repository' => 'repository is gone: macOS builds compile their PHP, so no runtime is downloaded.',
     ];
 
     private const ID = '/^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)+$/';
@@ -61,6 +73,9 @@ final class BuildJson
         unset($file['$schema']);
 
         foreach (array_keys($file) as $key) {
+            if (isset(self::MOVED[$key])) {
+                throw new RuntimeException(self::FILE.' '.self::MOVED[$key].' Remove the key.');
+            }
             if (! array_key_exists($key, self::DEFAULTS)) {
                 throw new RuntimeException(self::FILE.' has no key "'.$key.'"; the keys are '.implode(', ', array_keys(self::DEFAULTS)).'.');
             }
@@ -129,7 +144,7 @@ final class BuildJson
             }
         }
 
-        foreach (['name', 'sketch', 'icon', 'summary', 'description', 'author', 'homepage', 'license', 'category', 'php', 'repository', 'sign'] as $key) {
+        foreach (['name', 'sketch', 'icon', 'summary', 'description', 'author', 'homepage', 'license', 'category'] as $key) {
             if ($values[$key] !== null && ! is_string($values[$key])) {
                 throw new RuntimeException(self::FILE.' '.$key.' must be a string.');
             }
@@ -147,6 +162,27 @@ final class BuildJson
 
         if (! is_bool($values['zts'])) {
             throw new RuntimeException(self::FILE.' zts must be true or false.');
+        }
+
+        if (! is_int($values['build']) || $values['build'] < 1) {
+            throw new RuntimeException(self::FILE.' build must be a whole number of at least 1.');
+        }
+
+        if (! in_array($values['category'], self::CATEGORIES, true)) {
+            throw new RuntimeException(self::FILE.' category '.$values['category'].' is not a freedesktop main category: '.implode(', ', self::CATEGORIES).'.');
+        }
+
+        if (! is_array($values['permissions']) || ($values['permissions'] !== [] && array_is_list($values['permissions']))) {
+            throw new RuntimeException(self::FILE.' permissions must be an object of permission: the sentence macOS shows when it asks.');
+        }
+
+        foreach ($values['permissions'] as $permission => $why) {
+            if (! in_array($permission, self::PERMISSIONS, true)) {
+                throw new RuntimeException(self::FILE.' permissions: '.$permission.' is not one of '.implode(', ', self::PERMISSIONS).'.');
+            }
+            if (! is_string($why) || trim($why) === '') {
+                throw new RuntimeException(self::FILE.' permissions: '.$permission.' needs the sentence macOS shows when it asks.');
+            }
         }
     }
 }

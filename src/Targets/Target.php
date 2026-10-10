@@ -25,7 +25,7 @@ interface Target
 
     /**
      * @param  Closure(string): void  $report  one line per step
-     * @return string path to the packaged app (a .app directory or a .deb file)
+     * @return string path to the packaged app (a .dmg or a .deb file)
      */
     public function build(string $phar, Manifest $manifest, string $output_dir, Closure $report): string;
 }

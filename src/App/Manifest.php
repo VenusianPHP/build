@@ -11,6 +11,8 @@ final readonly class Manifest
      * @param  list<string>  $targets  empty means the machine running the build
      * @param  array<string, string>  $env  the packaged app's .env: the app's .env, build.env over it, less build.env_except, APP_ID always
      * @param  bool  $windowed  the app has a toolkit (a jovian/* package), so it gets a desktop entry and icon
+     * @param  int  $build  build.json build: the .app's CFBundleVersion
+     * @param  array<string, string>  $permissions  build.json permissions: permission => the sentence macOS shows when it asks
      */
     public function __construct(
         public string $name,
@@ -20,9 +22,6 @@ final readonly class Manifest
         public array $sketches,
         public ?string $icon,
         public array $extensions,
-        public ?string $php,
-        public string $repository,
-        public string $sign,
         public array $targets,
         public string $base_path,
         public array $env = [],
@@ -34,6 +33,8 @@ final readonly class Manifest
         public string $category = 'Utility',
         public bool $zts = false,
         public bool $windowed = false,
+        public int $build = 1,
+        public array $permissions = [],
     ) {}
 
     public static function fromJson(string $json): self
@@ -48,9 +49,6 @@ final readonly class Manifest
             sketches: array_values($data['sketches'] ?? []),
             icon: $data['icon'] ?? null,
             extensions: array_values($data['extensions'] ?? []),
-            php: $data['php'] ?? null,
-            repository: (string) ($data['repository'] ?? 'phpacker/php-bin'),
-            sign: (string) ($data['sign'] ?? 'adhoc'),
             targets: array_values($data['targets'] ?? []),
             base_path: (string) $data['base_path'],
             env: array_map('strval', (array) ($data['env'] ?? [])),
@@ -62,6 +60,8 @@ final readonly class Manifest
             category: (string) ($data['category'] ?? 'Utility'),
             zts: (bool) ($data['zts'] ?? false),
             windowed: (bool) ($data['windowed'] ?? false),
+            build: (int) ($data['build'] ?? 1),
+            permissions: (array) ($data['permissions'] ?? []),
         );
     }
 
