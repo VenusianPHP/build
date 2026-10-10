@@ -3,7 +3,7 @@
     "description": "Compiles a Venusian app into a native executable. Installed by venusian install:sdk.",
     "type": "venusian-tool",
     "keywords": ["venusian", "build", "installer", "macos", "deb"],
-    "version": "0.10.7",
+    "version": "0.10.9",
     "license": "MIT",
     "authors": [{"name": "Angel Gonzalez"}],
     "require": {
