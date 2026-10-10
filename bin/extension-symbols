@@ -1,0 +1,22 @@
+#!/usr/bin/env php
+<?php
+
+/*
+ * Prints venusian build's symbol map for the PHP running it: every loaded
+ * extension's functions and classes. Each map file named after it is merged
+ * under this PHP's. Run it on PHPs with the whole catalog loaded, on macOS and
+ * on Linux, and commit the merge as resources/extension-symbols.json:
+ *   php84 bin/extension-symbols > mac.json
+ *   php bin/extension-symbols mac.json > resources/extension-symbols.json   (on Linux)
+ */
+
+require __DIR__.'/../src/Extensions/SymbolMap.php';
+
+use Venusian\Build\Extensions\SymbolMap;
+
+$map = SymbolMap::fromRunningPhp();
+foreach (array_slice($argv, 1) as $file) {
+    $map = SymbolMap::fromFile($file)->merge($map);
+}
+
+echo $map->toJson(), "\n";

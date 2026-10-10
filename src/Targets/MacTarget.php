@@ -28,6 +28,7 @@ final class MacTarget implements Target
         private readonly MacAppBundle $bundle,
         private readonly CodeSigner $signer,
         private readonly MacDiskImage $disk,
+        private readonly BootCheck $boot,
         private readonly UserConfig $config,
         private readonly Closure $tool,
         private readonly string $os_family = PHP_OS_FAMILY,
@@ -80,6 +81,8 @@ final class MacTarget implements Target
 
         $report(CodeSigner::adhoc($identity) ? 'Signing ad hoc' : "Signing as {$identity}");
         $this->signer->sign($app, $certificate, $manifest->permissions);
+        $report('Starting it once to check it boots');
+        $this->boot->check("{$app}/Contents/MacOS/{$manifest->kebab()}", "{$app}/Contents/Resources/{$manifest->kebab()}.phar", $manifest->name);
         $report($app);
 
         $dmg = $this->disk->create($app, $manifest, $output_dir);

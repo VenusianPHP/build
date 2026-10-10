@@ -13,7 +13,7 @@ use Venusian\Build\Targets\Target;
  * names that this machine can build; the rest are reported with why. No
  * target at all is an error naming the known ones.
  */
-final class RecordingTarget implements Target
+class RecordingTarget implements Target
 {
     public array $built = [];
 
@@ -26,7 +26,7 @@ final class RecordingTarget implements Target
 
     public function build(string $phar, Manifest $manifest, string $output_dir, Closure $report): string
     {
-        $this->built[] = [$phar, $output_dir];
+        $this->built[] = [$phar, $output_dir, $manifest];
         file_put_contents("{$output_dir}/{$this->name}.out", 'built');
 
         return "{$output_dir}/{$this->name}.out";
@@ -87,4 +87,33 @@ it('names this machine from its OS family and CPU', function () {
     expect(Build::hostName('Darwin', 'arm64'))->toBe('macos-arm64')
         ->and(Build::hostName('Linux', 'aarch64'))->toBe('linux-arm64')
         ->and(Build::hostName('Linux', 'x86_64'))->toBe('linux-x86_64');
+});
+
+it('adds the extensions the app\'s own code calls, says why, and builds with them', function () {
+    file_put_contents($this->root.'/app/app/Probe.php', '<?php namespace App; final class Probe { public function x() { return new \DOMDocument; } }');
+    $target = new RecordingTarget('macos-arm64', true);
+
+    (new Build($this->phars, [$target], 'macos-arm64'))->run($this->root.'/app', ($this->manifest)([]), $this->report);
+
+    expect($this->lines)->toContain('Adding dom: app/Probe.php uses DOMDocument')
+        ->and($target->built[0][2]->extensions)->toContain('dom');
+});
+
+it('fails on an app-code hit the target cannot build, after saying where it came from', function () {
+    file_put_contents($this->root.'/app/app/Money.php', '<?php namespace App; final class Money { public function x() { return new \NumberFormatter("en", 1); } }');
+    $target = new class('macos-arm64', true) extends RecordingTarget {
+        public string $cache = '';
+
+        public function build(string $phar, Manifest $manifest, string $output_dir, Closure $report): string
+        {
+            (new Venusian\Build\Extensions\ExtensionSet(Venusian\Build\Tests\Fakes\FakeSources::make($this->cache), 'darwin'))->resolve($manifest->extensions, false, $report);
+
+            return '';
+        }
+    };
+    $target->cache = $this->root.'/cache';
+
+    expect(fn () => (new Build($this->phars, [$target], 'macos-arm64'))->run($this->root.'/app', ($this->manifest)([]), $this->report))
+        ->toThrow(RuntimeException::class, 'intl ships with php-src, but a macOS build has no library for it');
+    expect($this->lines)->toContain('Adding intl: app/Money.php uses NumberFormatter');
 });

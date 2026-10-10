@@ -90,3 +90,31 @@ it('carries summary, description, author, homepage, license, category and zts fr
     expect([$manifest->summary, $manifest->description, $manifest->author, $manifest->homepage, $manifest->license, $manifest->category, $manifest->zts])
         ->toBe(['Sky', "A\n\nB", 'A <a@b.c>', 'https://x', 'MIT', 'Education', true]);
 });
+
+it('takes the app\'s own ext-* requirements from the lock\'s platform list', function () {
+    $lock = json_decode(file_get_contents($this->root.'/composer.lock'), true);
+    $lock['platform'] = ['php' => '^8.4', 'ext-pdo_sqlite' => '*', 'ext-DOM' => '*'];
+    file_put_contents($this->root.'/composer.lock', json_encode($lock));
+
+    expect((new ManifestReader($this->root))->read()->extensions)->toBe(['appkit', 'ctype', 'dom', 'imgdec', 'mbstring', 'pdo_sqlite']);
+});
+
+it('reads the default database connection, its sqlite path from database_path()', function () {
+    file_put_contents($this->root.'/config/database.php', "<?php return ['default' => env('DB_CONNECTION', 'sqlite'), 'connections' => ['sqlite' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE', database_path('database.sqlite'))], 'mysql' => ['driver' => 'mysql', 'database' => 'app']]];");
+
+    expect((new ManifestReader($this->root))->read()->database)->toBe(['driver' => 'sqlite', 'database' => $this->root.'/database/database.sqlite']);
+});
+
+it('has no database without config/database.php', function () {
+    expect((new ManifestReader($this->root))->read()->database)->toBeNull();
+});
+
+it('resolves the database with build.json env over .env, as the packaged .env will have it', function () {
+    file_put_contents($this->root.'/config/database.php', "<?php return ['default' => env('DB_CONNECTION', 'sqlite'), 'connections' => ['sqlite' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE', database_path('database.sqlite'))], 'mysql' => ['driver' => 'mysql', 'database' => 'app']]];");
+    file_put_contents($this->root.'/.env', "DB_CONNECTION=mysql\n", FILE_APPEND);
+    $build = json_decode(file_get_contents($this->root.'/build.json'), true);
+    $build['env'] = ['DB_CONNECTION' => 'sqlite'];
+    file_put_contents($this->root.'/build.json', json_encode($build));
+
+    expect((new ManifestReader($this->root))->read()->database)->toBe(['driver' => 'sqlite', 'database' => $this->root.'/database/database.sqlite']);
+});

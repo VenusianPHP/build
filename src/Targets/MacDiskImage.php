@@ -36,13 +36,13 @@ final class MacDiskImage
         $dmg = "{$output_dir}/{$manifest->kebab()}-{$manifest->version}-macos-arm64.dmg";
         $work = "{$output_dir}/.dmg-{$manifest->kebab()}";
         $image = "{$work}/rw.dmg";
-        $mount = "{$work}/mnt";
+        $mount = self::mountPoint($work);
         if (is_dir($mount)) {
             // A run killed while the image was attached left it mounted here.
             ($this->exec)(['hdiutil', 'detach', '-force', $mount], null);
         }
-        $this->files->remove([$work, $dmg]);
-        $this->files->mkdir($mount);
+        $this->files->remove([$work, $mount, $dmg]);
+        $this->files->mkdir([$work, $mount]);
 
         try {
             $megabytes = (int) ceil(self::megabytes($app) * 1.25) + 16;
@@ -64,9 +64,21 @@ final class MacDiskImage
             $this->must(['hdiutil', 'convert', $image, '-format', 'UDZO', '-ov', '-o', $dmg]);
         } finally {
             $this->files->remove($work);
+            // Empty once detached; still mounted after a failed detach, which the next run forces.
+            @rmdir($mount);
         }
 
         return $dmg;
+    }
+
+    /**
+     * Where the image mounts: the boot volume's temp dir, named by the work dir so a mount a killed
+     * run left is found again. hdiutil refuses a mount point on a volume with owners off, as an
+     * external APFS or HFS+ disk mounts by default ("attach failed - Permission denied").
+     */
+    public static function mountPoint(string $work): string
+    {
+        return rtrim(sys_get_temp_dir(), '/').'/venusian-dmg-'.substr(sha1($work), 0, 12);
     }
 
     public function sign(string $dmg, string $identity): void

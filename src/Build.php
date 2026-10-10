@@ -6,6 +6,7 @@ use Closure;
 use RuntimeException;
 use Symfony\Component\Filesystem\Filesystem;
 use Venusian\Build\App\Manifest;
+use Venusian\Build\Extensions\ExtensionSet;
 use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Targets\Target;
 
@@ -102,7 +103,16 @@ final class Build
         try {
             $report('Packing the phar');
             $phar = "{$work}/{$manifest->kebab()}.phar";
-            $this->phars->build($app_dir, $manifest, $phar);
+            $found = $this->phars->build($app_dir, $manifest, $phar, $report);
+            $known = [...$manifest->extensions, ...ExtensionSet::ALWAYS, ...array_merge(...array_values(ExtensionSet::BASE))];
+            foreach ($found['added'] as $extension => $why) {
+                if (! in_array($extension, $known, true)) {
+                    $report("Adding {$extension}: {$why}");
+                }
+            }
+            $extensions = array_values(array_unique([...$manifest->extensions, ...array_keys($found['added'])]));
+            sort($extensions);
+            $manifest = $manifest->with(['extensions' => $extensions, 'uses' => $found['uses']]);
 
             $outputs = [];
             foreach ($buildable as $target) {

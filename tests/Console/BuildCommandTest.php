@@ -13,6 +13,7 @@ use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Hosts\UserConfig;
 use Venusian\Build\Runtime\MacLibraries;
 use Venusian\Build\Runtime\MacRuntime;
+use Venusian\Build\Targets\BootCheck;
 use Venusian\Build\Targets\CodeSigner;
 use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
@@ -53,6 +54,7 @@ beforeEach(function () {
             new MacAppBundle($files, $run),
             new CodeSigner($run),
             new MacDiskImage($files, $this->mac->exec()),
+            new BootCheck(fn (array $command, array $env): array => [0, '{"booted":true,"database":null}', '']),
             $this->config,
             fn (string $tool): bool => true,
             $os_family,

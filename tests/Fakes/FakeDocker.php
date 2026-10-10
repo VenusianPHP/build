@@ -2,6 +2,7 @@
 
 namespace Venusian\Build\Tests\Fakes;
 
+use Closure;
 use PharData;
 use RuntimeException;
 use Venusian\Build\Hosts\Docker;
@@ -9,12 +10,15 @@ use Venusian\Build\Hosts\Docker;
 /**
  * A docker CLI that records every command: the current context is
  * desktop-linux; the jetson context is aarch64, every other x86_64; no image exists and pulls are denied; a pushed tar is
- * extracted to <root>/pushed-<n>; cat answers DEBFILE; anything else "ok".
+ * extracted to <root>/pushed-<n>; cat answers DEBFILE; a command `fail` answers with a message throws it; anything else "ok".
  */
 final class FakeDocker
 {
     /** @var list<list<string>> */
     public array $commands = [];
+
+    /** @var (Closure(list<string>): ?string)|null a command it answers with a message throws that message, after it is recorded */
+    public ?Closure $fail = null;
 
     private int $pushes = 0;
 
@@ -29,6 +33,10 @@ final class FakeDocker
     private function answer(array $command, ?string $stdin): string
     {
         $this->commands[] = $command;
+
+        if ($this->fail !== null && ($message = ($this->fail)($command)) !== null) {
+            throw new RuntimeException($message);
+        }
 
         return match (true) {
             $command[1] === 'context' => "desktop-linux\n",

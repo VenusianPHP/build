@@ -23,18 +23,18 @@ afterEach(function () {
     (new Filesystem)->remove($this->root);
 });
 
-it('gives a macOS build kqueue, pcurl and curl over the framework base', function () {
+it('gives a macOS build kqueue, pcurl, rasterize and curl over the framework base', function () {
     [$names, $args, $packages] = (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve([], false, $this->report);
 
-    expect($names)->toBe(['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'kqueue', 'pcurl', 'curl'])
-        ->and($args)->toContain('--enable-venusian', '--disable-rpath', '--with-curl', '--enable-kqueue', '--enable-pcurl')
-        ->and(array_column($packages, 'name'))->toBe(['kqueue', 'pcurl']);
+    expect($names)->toBe(['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'kqueue', 'pcurl', 'rasterize', 'curl'])
+        ->and($args)->toContain('--enable-venusian', '--disable-rpath', '--with-curl', '--enable-kqueue', '--enable-pcurl', '--enable-rasterize')
+        ->and(array_column($packages, 'name'))->toBe(['kqueue', 'pcurl', 'rasterize']);
 });
 
 it('keeps the Linux set as the .deb has it', function () {
     [$names] = (new ExtensionSet($this->sources, 'linux'))->resolve(['appkit'], false, $this->report);
 
-    expect($names)->toBe(['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'epoll', 'pcurl', 'sockets', 'curl'])
+    expect($names)->toBe(['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'epoll', 'pcurl', 'rasterize', 'sockets', 'curl'])
         ->and($this->lines)->toContain('Leaving out appkit: php-io-extensions/appkit v0.10.0 builds on darwin only');
 });
 
@@ -50,7 +50,7 @@ it('leaves GTK and Qt out of a macOS build and says why', function () {
     [$names, , $packages] = (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve(['appkit', 'gtk', 'qt'], false, $this->report);
 
     expect($names)->toContain('appkit')->not->toContain('gtk')->not->toContain('qt')
-        ->and(array_column($packages, 'name'))->toBe(['kqueue', 'pcurl', 'appkit'])
+        ->and(array_column($packages, 'name'))->toBe(['kqueue', 'pcurl', 'rasterize', 'appkit'])
         ->and($this->lines)->toContain('Leaving out gtk: a macOS build ships AppKit; GTK and Qt run on a Mac from source for testing')
         ->and($this->lines)->toContain('Leaving out qt: a macOS build ships AppKit; GTK and Qt run on a Mac from source for testing');
 });
@@ -63,4 +63,12 @@ it('compiles thread safe when asked', function () {
     [, $args] = (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve([], true, $this->report);
 
     expect($args)->toContain('--enable-zts');
+});
+
+it('reports the extensions vendor code calls that the build does not compile in', function () {
+    (new ExtensionSet($this->sources, 'darwin', $this->dirs))->resolve([], false, $this->report, [
+        'intl' => ['laravel/framework', 'nesbot/carbon', 'symfony/string'], 'pcurl' => ['venusian/framework'], 'dom' => ['league/commonmark'],
+    ]);
+
+    expect($this->lines)->toContain('Vendor code also calls, not compiled in: dom (league/commonmark), intl (laravel/framework, nesbot/carbon +1); add one to build.json extensions if the app needs it');
 });

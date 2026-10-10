@@ -38,12 +38,12 @@ final class ExtensionSet
     private const UNCOMPILED_DARWIN = ['gettext', 'gmp', 'intl', 'pdo_pgsql', 'pgsql', 'sodium', 'tidy', 'zip'];
 
     /** Always in PHP; never named to configure. */
-    private const ALWAYS = ['core', 'date', 'hash', 'json', 'pcre', 'random', 'reflection', 'spl', 'standard'];
+    public const ALWAYS = ['core', 'date', 'hash', 'json', 'pcre', 'random', 'reflection', 'spl', 'standard'];
 
-    /** What the framework requires of every app, the OS's loop backend and HTTP on the loop. */
-    private const BASE = [
-        'linux' => ['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'epoll', 'pcurl'],
-        'darwin' => ['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'kqueue', 'pcurl'],
+    /** What the framework requires of every app, the OS's loop backend, HTTP on the loop, and rasterize, Surface's 'extended' drawing driver in C (Angel, 2026-10-09). */
+    public const BASE = [
+        'linux' => ['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'epoll', 'pcurl', 'rasterize'],
+        'darwin' => ['ctype', 'filter', 'mbstring', 'openssl', 'pdo', 'kqueue', 'pcurl', 'rasterize'],
     ];
 
     /** An extension that pulls another in: declared by PHP_ADD_EXTENSION_DEP in its config.m4. */
@@ -72,9 +72,10 @@ final class ExtensionSet
     /**
      * @param  list<string>  $wanted  the app's extension names
      * @param  Closure(string): void  $report
+     * @param  array<string, list<string>>  $uses  extension => packages whose code calls it
      * @return array{0: list<string>, 1: list<string>, 2: list<array{name: string, version: string, reference: string, path: string, build_path: string, configure: string, os_families: list<string>, os_families_exclude: list<string>, apt_build: list<string>, apt_depends: list<string>, apt_recommends: list<string>}>}
      */
-    public function resolve(array $wanted, bool $zts, Closure $report): array
+    public function resolve(array $wanted, bool $zts, Closure $report, array $uses = []): array
     {
         $names = [];
         $queue = [...self::BASE[$this->os], ...array_map('strtolower', $wanted)];
@@ -129,6 +130,15 @@ final class ExtensionSet
             $built[] = $name;
             $packages[] = ['name' => $name, ...$package];
             $args[] = $package['configure'];
+        }
+
+        $missing = array_diff_key($uses, array_flip([...$built, ...self::ALWAYS]));
+        if ($missing !== []) {
+            ksort($missing);
+            $report('Vendor code also calls, not compiled in: '.implode(', ', array_map(
+                fn (string $extension, array $packages): string => $extension.' ('.implode(', ', array_slice($packages, 0, 2)).(count($packages) > 2 ? ' +'.(count($packages) - 2) : '').')',
+                array_keys($missing), $missing,
+            )).'; add one to build.json extensions if the app needs it');
         }
 
         return [$built, $args, $packages];

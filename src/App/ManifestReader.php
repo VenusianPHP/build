@@ -23,8 +23,8 @@ final class ManifestReader
 
     public function read(): Manifest
     {
-        $config = $this->evaluate();
         $build = (new BuildJson($this->app_dir))->read();
+        $config = $this->evaluate($build);
         $name = (string) ($build['name'] ?? $config['app']['name'] ?? 'Venusian');
         $sketches = $config['sketches'];
 
@@ -70,17 +70,20 @@ final class ManifestReader
             windowed: $this->windowed($lock),
             build: (int) $build['build'],
             permissions: (array) $build['permissions'],
+            database: $config['database'] ?? null,
         );
     }
 
     /**
-     * config/app.php, the sketch names and the parsed .env, from a child PHP.
+     * config/app.php, the sketch names and the parsed .env, from a child PHP, evaluated with build.json env over .env.
      *
-     * @return array{app: array<string, mixed>, sketches: list<string>, dotenv: array<string, string>}
+     * @param  array<string, mixed>  $build
+     * @return array{app: array<string, mixed>, sketches: list<string>, dotenv: array<string, string>, database: array{driver: string, database: string}|null}
      */
-    private function evaluate(): array
+    private function evaluate(array $build): array
     {
-        $process = new Process([$this->php_binary, __DIR__.'/read.php', $this->app_dir]);
+        $packaged = json_encode(['env' => (object) (array) $build['env'], 'except' => array_values((array) $build['env_except'])], JSON_THROW_ON_ERROR);
+        $process = new Process([$this->php_binary, __DIR__.'/read.php', $this->app_dir, $packaged]);
         $process->run();
 
         if (! $process->isSuccessful()) {
@@ -111,6 +114,13 @@ final class ManifestReader
                 if (str_starts_with($requirement, 'ext-')) {
                     $names[] = substr($requirement, 4);
                 }
+            }
+        }
+
+        // The app's own composer.json requirements: composer keeps them under platform, not in packages.
+        foreach (array_keys($lock['platform'] ?? []) as $requirement) {
+            if (str_starts_with((string) $requirement, 'ext-')) {
+                $names[] = substr((string) $requirement, 4);
             }
         }
 

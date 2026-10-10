@@ -34,18 +34,28 @@ it('copies the .app beside an Applications link into an image of a size it choos
 
     $dmg = (new MacDiskImage(new Filesystem, $exec))->create($this->root.'/build/Star Gazer.app', $this->manifest, $this->root.'/build');
     $work = $this->root.'/build/.dmg-star-gazer';
+    $mount = MacDiskImage::mountPoint($work);
 
     expect($dmg)->toBe($this->root.'/build/star-gazer-1.2.3-macos-arm64.dmg')
         ->and(file_get_contents($dmg))->toBe('DMG')
         ->and($this->mac->commands)->toBe([
             ['hdiutil', 'create', '-size', '16m', '-fs', 'HFS+', '-volname', 'Star Gazer', '-ov', $work.'/rw.dmg'],
-            ['hdiutil', 'attach', $work.'/rw.dmg', '-nobrowse', '-noautoopen', '-mountpoint', $work.'/mnt'],
-            ['ditto', $this->root.'/build/Star Gazer.app', $work.'/mnt/Star Gazer.app'],
-            ['hdiutil', 'detach', $work.'/mnt'],
+            ['hdiutil', 'attach', $work.'/rw.dmg', '-nobrowse', '-noautoopen', '-mountpoint', $mount],
+            ['ditto', $this->root.'/build/Star Gazer.app', $mount.'/Star Gazer.app'],
+            ['hdiutil', 'detach', $mount],
             ['hdiutil', 'convert', $work.'/rw.dmg', '-format', 'UDZO', '-ov', '-o', $dmg],
         ])
         ->and($linked)->toBe('/Applications')
-        ->and(is_dir($work))->toBeFalse();
+        ->and(is_dir($work))->toBeFalse()
+        ->and(is_dir($mount))->toBeFalse();
+});
+
+it('mounts on the boot volume, since a volume with owners off refuses mount points', function () {
+    $mount = MacDiskImage::mountPoint($this->root.'/build/.dmg-star-gazer');
+
+    expect($mount)->toStartWith(rtrim(sys_get_temp_dir(), '/').'/venusian-dmg-')
+        ->and(MacDiskImage::mountPoint($this->root.'/build/.dmg-star-gazer'))->toBe($mount)
+        ->and(MacDiskImage::mountPoint($this->root.'/other/.dmg-star-gazer'))->not->toBe($mount);
 });
 
 it('sizes the image a quarter over the app, plus 16 MB', function () {
@@ -105,12 +115,12 @@ it('names the command that failed', function () {
 });
 
 it('detaches a mount an interrupted run left before starting over', function () {
-    $work = $this->root.'/build/.dmg-star-gazer';
-    mkdir($work.'/mnt', 0777, true);
+    $mount = MacDiskImage::mountPoint($this->root.'/build/.dmg-star-gazer');
+    mkdir($mount, 0777, true);
 
     (new MacDiskImage(new Filesystem, $this->mac->exec()))->create($this->root.'/build/Star Gazer.app', $this->manifest, $this->root.'/build');
 
-    expect($this->mac->commands[0])->toBe(['hdiutil', 'detach', '-force', $work.'/mnt']);
+    expect($this->mac->commands[0])->toBe(['hdiutil', 'detach', '-force', $mount]);
 });
 
 it('reports the copy failure even when the image will not detach', function () {

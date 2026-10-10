@@ -103,6 +103,18 @@ Facts 11 to 21, from the distribution design (2026-10-08 and 2026-10-09).[^dist]
     accepted Stargazer and the full catalog first time, each within the build's run (390 s
     and 201 s end to end); hardened runtime with `allow-jit` only, library validation on, and
     the Vulkan pair signed by the same team loads.
+25. **Stargazer's shipped weight** (`d6818ec` plus its stash commits, 2026-10-09): production
+    vendor 42.5 MB with path repositories followed (69 packages), of which 17.0 MB is the path
+    packages' `.git` directories, 3.1 MB docs, 1.5 MB tests, 0.65 MB markdown/txt/rst; the
+    remaining non-PHP files are 0.7 MB and include `vendor/composer/installed.json`, which
+    package discovery reads at run time. The four path packages (framework, surface, appkit,
+    venusian-stargazer) ship 27.0 MB and publish 8.2 MB under git's rules. Namespace pruning
+    to a fixed point drops 1 package (0.01 MB). A token scan of everything shipped names 40
+    extensions, including intl in 32 vendor files (21 guarded), gmp, pgsql, dba and redis. An
+    external volume mounted `noowners` refuses `hdiutil attach -mountpoint` on itself.
+    Shipped under slice 6 (`c2e8beb`, 2026-10-10): phar 26.2 MB (was 46 MB), `.dmg` 13 MB
+    (was 30.1 MB), `.app` 48 MB, `.deb` 6.6 MB (was 17.1 MB); the scan over the stage takes
+    16.9 s on the M1 Pro and names 31 extensions vendor code calls that the set leaves out.
 
 [^spec]: design spec, section "Measured facts"
 [^dist]: distribution design, section "Measured facts the design rests on"

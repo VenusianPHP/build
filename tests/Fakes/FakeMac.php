@@ -4,6 +4,7 @@ namespace Venusian\Build\Tests\Fakes;
 
 use Closure;
 use RuntimeException;
+use Symfony\Component\Filesystem\Filesystem;
 
 /**
  * The Mac's commands, recorded. xcrun answers an SDK path and version; security
@@ -11,7 +12,7 @@ use RuntimeException;
  * complete prefix (with the Vulkan pair); recipe.sh keeps the configure args
  * it was given and writes out/venusian; otool lists libSystem (and
  * @rpath/libvulkan.1.dylib when $vulkan); hdiutil create and convert write
- * the image they name;
+ * the image they name, and detach empties the mount point;
  * notarytool answers $notary and $notary_log. Everything else succeeds.
  */
 final class FakeMac
@@ -67,6 +68,7 @@ final class FakeMac
                 $command[0] === 'otool' => [0, $command[2].":\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n"
                     .($this->vulkan ? "\t@rpath/libvulkan.1.dylib (compatibility version 1.0.0, current version 1.4.309)\n" : ''), ''],
                 $command[0] === 'hdiutil' && in_array($command[1], ['create', 'convert'], true) => $this->dmg((string) end($command)),
+                $command[0] === 'hdiutil' && $command[1] === 'detach' => $this->unmount((string) end($command)),
                 $command[0] === 'xcrun' && $command[1] === 'notarytool' && $command[2] === 'submit' => [0, $this->notary, ''],
                 $command[0] === 'xcrun' && $command[1] === 'notarytool' && $command[2] === 'log' => [0, $this->notary_log, ''],
                 default => [0, '', ''],
@@ -95,6 +97,16 @@ final class FakeMac
         file_put_contents($stage.'/out/venusian', 'BINARY');
 
         return [0, "Venusian SAPI 0.10.2, PHP 8.4.26 NTS\n", ''];
+    }
+
+    /** As a real detach leaves it: the mount point empty. @return array{0: int, 1: string, 2: string} */
+    private function unmount(string $mount): array
+    {
+        foreach (array_diff(is_dir($mount) ? scandir($mount) : [], ['.', '..']) as $entry) {
+            (new Filesystem)->remove("{$mount}/{$entry}");
+        }
+
+        return [0, '', ''];
     }
 
     /** @return array{0: int, 1: string, 2: string} */

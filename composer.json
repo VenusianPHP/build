@@ -3,7 +3,7 @@
     "description": "Compiles a Venusian app into a native executable. Installed by venusian install:sdk.",
     "type": "venusian-tool",
     "keywords": ["venusian", "build", "installer", "macos", "deb"],
-    "version": "0.10.6",
+    "version": "0.10.7",
     "license": "MIT",
     "authors": [{"name": "Angel Gonzalez"}],
     "require": {
@@ -11,6 +11,7 @@
         "ext-phar": "*",
         "ext-zip": "*",
         "laravel/prompts": "^0.3.19",
+        "nikic/php-parser": "^5.0",
         "symfony/console": "^7.4|^8.0",
         "symfony/filesystem": "^7.0|^8.0",
         "symfony/finder": "^7.0|^8.0",

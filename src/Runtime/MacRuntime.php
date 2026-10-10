@@ -40,7 +40,7 @@ final class MacRuntime
         // The Command Line Tools' SDK path names no version: an upgrade keeps the path and changes the SDK.
         $sdk_version = trim(($this->run)(['xcrun', '--show-sdk-version'], null));
         $directories = ['iconv' => "{$sdk}/usr", 'bz2' => "{$sdk}/usr", 'ldap' => $this->libraries->path()];
-        [$names, $args, $packages] = (new ExtensionSet($this->sources, 'darwin', $directories))->resolve($manifest->extensions, $manifest->zts, $report);
+        [$names, $args, $packages] = (new ExtensionSet($this->sources, 'darwin', $directories))->resolve($manifest->extensions, $manifest->zts, $report, $manifest->uses);
         $prefix = $this->libraries->ensure($report);
         $php = $this->sources->phpSrc();
         $sapi = $this->sources->sapi();

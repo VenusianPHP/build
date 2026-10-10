@@ -27,6 +27,7 @@ use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Runtime\MacLibraries;
 use Venusian\Build\Runtime\MacRuntime;
 use Venusian\Build\Sources\Sources;
+use Venusian\Build\Targets\BootCheck;
 use Venusian\Build\Targets\CodeSigner;
 use Venusian\Build\Targets\DebTarget;
 use Venusian\Build\Targets\MacAppBundle;
@@ -147,6 +148,7 @@ class BuildCommand extends Command
                 new MacAppBundle($files, $run),
                 new CodeSigner($run),
                 new MacDiskImage($files, $exec),
+                BootCheck::real(),
                 $config,
                 fn (string $tool): bool => (new ExecutableFinder)->find($tool) !== null,
             ),

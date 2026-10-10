@@ -48,7 +48,7 @@ it('compiles once per set and reuses the binary', function () {
         ->and($recipes)->toHaveCount(1)
         ->and($this->mac->configure)->toContain("--enable-appkit\n", "--with-iconv=/SDK/usr\n", "--enable-kqueue\n", "--enable-pcurl\n")
         ->and($first['prefix'])->toStartWith($this->root.'/macos/prefix-14.0-')
-        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.2 and ctype, filter, mbstring, openssl, pdo, kqueue, pcurl, appkit, iconv, curl')
+        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.2 and ctype, filter, mbstring, openssl, pdo, kqueue, pcurl, rasterize, appkit, iconv, curl')
         ->and(end($this->lines))->toStartWith('Reusing the runtime compiled for set ');
 });
 
@@ -93,7 +93,7 @@ it('hands recipe.sh each extension with its build path', function () {
 
     $runtime->compile(($this->manifest)(['appkit']), $this->report);
 
-    expect($stage)->toBe("kqueue\t.\npcurl\text\nappkit\t.\n");
+    expect($stage)->toBe("kqueue\t.\npcurl\text\nrasterize\t.\nappkit\t.\n");
 });
 
 it('recompiles against a new SDK', function () {

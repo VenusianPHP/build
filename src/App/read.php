@@ -1,7 +1,7 @@
 <?php
 
 /*
- * Run by ManifestReader in a child PHP: php read.php <app dir>
+ * Run by ManifestReader in a child PHP: php read.php <app dir> [<{"env": {...}, "except": [...]} from build.json>]
  *
  * Loads the app's autoloader when it has one (config files call framework
  * classes), exports .env into the environment so env() answers as the app
@@ -23,11 +23,37 @@ if (is_file($app.'/.env')) {
     }
 }
 
+// Config is evaluated in the environment the packaged app gets: build.json env over .env, less env_except.
+$dotenv = $env;
+$packaged = json_decode((string) ($argv[2] ?? '{}'), true) ?: [];
+$overrides = array_map('strval', (array) ($packaged['env'] ?? []));
+$env = array_diff_key([...$env, ...$overrides], array_flip((array) ($packaged['except'] ?? [])));
+
 foreach ($env as $key => $value) {
-    if (getenv($key) === false) {
+    if (getenv($key) === false || array_key_exists($key, $overrides)) {
         putenv("{$key}={$value}");
         $_ENV[$key] = $value;
         $_SERVER[$key] = $value;
+    }
+}
+
+// The framework's path helpers ask its container; config files evaluated here get the app's own paths.
+if (! function_exists('base_path')) {
+    function base_path(string $path = ''): string
+    {
+        return rtrim($GLOBALS['app'].'/'.ltrim($path, '/'), '/');
+    }
+}
+if (! function_exists('database_path')) {
+    function database_path(string $path = ''): string
+    {
+        return base_path('database/'.ltrim($path, '/'));
+    }
+}
+if (! function_exists('storage_path')) {
+    function storage_path(string $path = ''): string
+    {
+        return base_path('storage/'.ltrim($path, '/'));
     }
 }
 
@@ -81,8 +107,13 @@ if (is_dir($directory)) {
 }
 sort($sketches);
 
+$database = $read($app.'/config/database.php');
+$default = $database['default'] ?? null;
+$connection = is_string($default) ? ($database['connections'][$default] ?? null) : null;
+
 echo json_encode([
     'app' => $read($app.'/config/app.php'),
     'sketches' => $sketches,
-    'dotenv' => (object) $env,
+    'database' => is_array($connection) ? ['driver' => (string) ($connection['driver'] ?? ''), 'database' => (string) ($connection['database'] ?? '')] : null,
+    'dotenv' => (object) $dotenv,
 ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);

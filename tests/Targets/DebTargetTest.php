@@ -65,15 +65,15 @@ it('builds the image locally when the registry has none, pushes everything, comp
         ->and(file_get_contents($deb))->toBe('DEBFILE');
 
     $kinds = array_map(fn (array $c): string => $c[3].(isset($c[4]) && $c[4] === '-t' ? ' build' : ''), $this->fake->commands);
-    expect($kinds)->toBe(['info', 'image', 'pull', 'build build', 'run', 'run', 'run', 'run', 'run'])
+    expect($kinds)->toBe(['info', 'image', 'pull', 'build build', 'run', 'run', 'run', 'run', 'run', 'run'])
         ->and($this->fake->commands[4])->toBe(['docker', '--context', 'gamingpc', 'run', '--rm', '-v', 'venusian-build-star-gazer:/work', '-w', '/work', $this->image, 'rm', '-rf', 'in', 'out', 'pkg']);
 
     $in = $this->root.'/pushed-1/in';
     expect(file_get_contents($in.'/php.version'))->toBe('8.4.26')
-        ->and(file_get_contents($in.'/extensions.list'))->toBe("epoll\t.\npcurl\text\ngtk\t.\n")
+        ->and(file_get_contents($in.'/extensions.list'))->toBe("epoll\t.\npcurl\text\nrasterize\t.\ngtk\t.\n")
         ->and(file_get_contents($in.'/configure.args'))->toBe(implode("\n", [
             '--disable-all', '--disable-cli', '--disable-cgi', '--disable-phpdbg', '--disable-rpath', '--enable-venusian', '--enable-phar',
-            '--enable-ctype', '--enable-filter', '--enable-mbstring', '--with-openssl', '--enable-pdo', '--enable-epoll', '--enable-pcurl',
+            '--enable-ctype', '--enable-filter', '--enable-mbstring', '--with-openssl', '--enable-pdo', '--enable-epoll', '--enable-pcurl', '--enable-rasterize',
             '--enable-gtk', '--enable-dom', '--enable-sockets', '--with-curl', '--with-libxml',
         ])."\n")
         ->and(is_file($in.'/php-src.tar.xz'))->toBeTrue()
@@ -99,9 +99,11 @@ it('builds the image locally when the registry has none, pushes everything, comp
         ->and(file_get_contents($in.'/deb/metainfo.xml'))->toContain('<project_license>MIT</project_license>')
         ->and(file_get_contents($in.'/deb/copyright'))->toContain('License: MIT')
         ->and($this->fake->commands[6])->toBe(['docker', '--context', 'gamingpc', 'run', '--rm', '-v', 'venusian-build-star-gazer:/work', '-w', '/work', $this->image, 'sh', 'recipe.sh'])
+        ->and($this->fake->commands[7])->toBe(['docker', '--context', 'gamingpc', 'run', '--rm', '-v', 'venusian-build-star-gazer:/work', '-w', '/work', $this->image, 'sh', '-c', 'mkdir -p /tmp/boot/bin && cp out/venusian /tmp/boot/bin/venusian && cp in/deb/app.phar /tmp/boot/bin/venusian.phar && HOME=/tmp/boot XDG_DATA_HOME=/tmp/boot/.local/share /tmp/boot/bin/venusian phar:///tmp/boot/bin/venusian.phar/.venusian-boot-check.php'])
+        ->and($this->lines)->toContain('Starting it once to check it boots')
         ->and($this->lines)->toContain('Building linux-x86_64 on docker context gamingpc')
-        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.2 and ctype, filter, mbstring, openssl, pdo, epoll, pcurl, gtk, dom, sockets, curl, libxml')
-        ->and($this->lines)->toContain('From Packagist: epoll v0.10.0 (ref-epo), pcurl v0.10.0 (ref-pcu), gtk v0.10.0 (ref-gtk)');
+        ->and($this->lines)->toContain('Compiling PHP 8.4.26 NTS with the Venusian SAPI v0.10.2 and ctype, filter, mbstring, openssl, pdo, epoll, pcurl, rasterize, gtk, dom, sockets, curl, libxml')
+        ->and($this->lines)->toContain('From Packagist: epoll v0.10.0 (ref-epo), pcurl v0.10.0 (ref-pcu), rasterize v0.10.0 (ref-ras), gtk v0.10.0 (ref-gtk)');
 });
 
 it('hashes the set from the PHP version, SAPI tag, thread safety, flags and extension versions, the same twice', function () {
@@ -179,7 +181,7 @@ it('refuses an extension name it cannot compile', function () {
 it('leaves out extensions whose php-ext metadata excludes Linux, and says so', function () {
     ($this->target)('x86_64', ['linux-x86_64' => 'gamingpc'])->build($this->root.'/app.phar', $this->manifest->with(['extensions' => ['appkit', 'gtk', 'kqueue']]), $this->root.'/build', $this->report);
 
-    expect(file_get_contents($this->root.'/pushed-1/in/extensions.list'))->toBe("epoll\t.\npcurl\text\ngtk\t.\n")
+    expect(file_get_contents($this->root.'/pushed-1/in/extensions.list'))->toBe("epoll\t.\npcurl\text\nrasterize\t.\ngtk\t.\n")
         ->and(file_get_contents($this->root.'/pushed-1/in/configure.args'))->not->toContain('appkit')
         ->and(is_file($this->root.'/pushed-1/in/ext/appkit.zip'))->toBeFalse()
         ->and($this->lines)->toContain('Leaving out appkit: php-io-extensions/appkit v0.10.0 builds on darwin only')
@@ -230,7 +232,7 @@ it('compiles PHP\'s own extensions in by flag, never through Packagist, with wha
     $args = file_get_contents($this->root.'/pushed-1/in/configure.args');
     expect($args)->toContain("--with-sodium\n")->toContain("--enable-gd\n")->toContain("--with-mysqli\n")->toContain("--enable-mysqlnd\n")
         ->toContain("--with-xsl\n")->toContain("--enable-dom\n")->toContain("--with-libxml\n")
-        ->and(glob($this->root.'/pushed-1/in/ext/*.zip'))->toBe([$this->root.'/pushed-1/in/ext/epoll.zip', $this->root.'/pushed-1/in/ext/pcurl.zip']);
+        ->and(glob($this->root.'/pushed-1/in/ext/*.zip'))->toBe([$this->root.'/pushed-1/in/ext/epoll.zip', $this->root.'/pushed-1/in/ext/pcurl.zip', $this->root.'/pushed-1/in/ext/rasterize.zip']);
 });
 
 it('names a php-src extension it does not compile yet instead of looking for it on Packagist', function (string $name) {
@@ -247,4 +249,11 @@ it('tags the build image with the hash of its Dockerfile, and recompiles PHP in 
     expect(file_get_contents($this->root.'/pushed-2/in/set.hash'))->not->toBe(file_get_contents($this->root.'/pushed-1/in/set.hash'));
 
     expect($this->fake->commands[0])->toBe(['docker', '--context', 'gamingpc', 'image', 'inspect', '--format', '{{.Id}}', DebTarget::IMAGE.'-'.substr(sha1("FROM ubuntu:24.04\nRUN true\n"), 0, 12)]);
+});
+it('stops before packaging when the app does not boot in the container', function () {
+    $this->fake->fail = fn (array $command): ?string => in_array('-c', $command, true) ? 'PHP Fatal error:  could not find driver' : null;
+
+    expect(fn () => ($this->target)('x86_64', ['linux-x86_64' => 'gamingpc'])->build($this->root.'/app.phar', $this->manifest, $this->root.'/build', $this->report))
+        ->toThrow(RuntimeException::class, 'Star Gazer does not start; the built binary, booting the packaged app, said:');
+    expect(array_filter($this->fake->commands, fn (array $c): bool => in_array('package.sh', $c, true)))->toBe([]);
 });

@@ -9,6 +9,7 @@ use Symfony\Component\Filesystem\Filesystem;
 use Venusian\Build\App\Manifest;
 use Venusian\Build\Extensions\ExtensionSet;
 use Venusian\Build\Hosts\Docker;
+use Venusian\Build\Phar\PharBuilder;
 use Venusian\Build\Sources\Sources;
 
 /**
@@ -84,7 +85,7 @@ final class DebTarget implements Target
         }
 
         $icon = $this->icon($manifest);
-        [$names, $args, $packages] = (new ExtensionSet($this->sources, 'linux'))->resolve($manifest->extensions, $manifest->zts, $report);
+        [$names, $args, $packages] = (new ExtensionSet($this->sources, 'linux'))->resolve($manifest->extensions, $manifest->zts, $report, $manifest->uses);
         $php = $this->sources->phpSrc();
         $sapi = $this->sources->sapi();
         $hash = sha1(implode("\n", [$this->image(), $php['version'], $sapi['version'], $manifest->zts ? 'zts' : 'nts', ...$args, ...array_map(fn (array $p): string => "{$p['name']}@{$p['version']}#{$p['reference']}", $packages)]));
@@ -127,6 +128,13 @@ final class DebTarget implements Target
             $this->docker->run($context, $this->image(), $volume, ['rm', '-rf', 'in', 'out', 'pkg']);
             $this->docker->push($context, $this->image(), $volume, $tar);
             $report(trim($this->docker->run($context, $this->image(), $volume, ['sh', 'recipe.sh'])) ?: 'Compiled');
+            $report('Starting it once to check it boots');
+            // The binary runs the <binary>.phar beside it, as installed: both go to a scratch directory, never into out/, which package.sh ships.
+            try {
+                $this->docker->run($context, $this->image(), $volume, ['sh', '-c', 'mkdir -p /tmp/boot/bin && cp out/venusian /tmp/boot/bin/venusian && cp in/deb/app.phar /tmp/boot/bin/venusian.phar && HOME=/tmp/boot XDG_DATA_HOME=/tmp/boot/.local/share /tmp/boot/bin/venusian phar:///tmp/boot/bin/venusian.phar/'.PharBuilder::BOOT_CHECK]);
+            } catch (RuntimeException $e) {
+                throw new RuntimeException(BootCheck::failure($manifest->name, $e->getMessage()), 0, $e);
+            }
             $deb = "out/{$manifest->kebab()}_{$manifest->version}_{$this->debianArch()}.deb";
             $report('Packaging '.basename($deb));
             $this->docker->run($context, $this->image(), $volume, ['sh', 'package.sh']);

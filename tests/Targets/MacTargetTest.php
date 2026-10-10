@@ -5,6 +5,7 @@ use Venusian\Build\App\Manifest;
 use Venusian\Build\Hosts\UserConfig;
 use Venusian\Build\Runtime\MacLibraries;
 use Venusian\Build\Runtime\MacRuntime;
+use Venusian\Build\Targets\BootCheck;
 use Venusian\Build\Targets\CodeSigner;
 use Venusian\Build\Targets\MacAppBundle;
 use Venusian\Build\Targets\MacDiskImage;
@@ -23,6 +24,8 @@ beforeEach(function () {
     file_put_contents($this->root.'/app.phar', 'PHAR');
     $this->mac = new FakeMac;
     $this->config = new UserConfig($this->root.'/home');
+    $this->boots = [];
+    $this->boot = [0, '{"booted":true,"database":null}', ''];
     $this->target = function (string $os = 'Darwin', string $machine = 'arm64', array $missing = []): MacTarget {
         $files = new Filesystem;
         $run = $this->mac->run();
@@ -32,6 +35,11 @@ beforeEach(function () {
             new MacAppBundle($files, $run),
             new CodeSigner($run),
             new MacDiskImage($files, $this->mac->exec()),
+            new BootCheck(function (array $command, array $env): array {
+                $this->boots[] = [$command, $env, is_dir($env['HOME'])];
+
+                return $this->boot;
+            }),
             $this->config,
             fn (string $tool): bool => ! in_array($tool, $missing, true),
             $os,
@@ -119,4 +127,24 @@ it('refuses an identity the keychain lacks before compiling', function () {
 
     expect(fn () => ($this->build)())->toThrow(RuntimeException::class, 'No valid signing identity named "Developer ID Application: Gone (TEAM)"');
     expect(array_filter($this->mac->commands, fn (array $c): bool => $c[0] === 'sh'))->toBe([]);
+});
+
+it('boots the bundled app once with HOME in a directory it removes afterwards', function () {
+    ($this->build)();
+    $app = $this->root.'/build/Star Gazer.app';
+
+    expect($this->boots)->toHaveCount(1)
+        // The real path: the phar's stub runs a script inside itself only when named by the path it sees for itself (macOS /var is /private/var).
+        ->and($this->boots[0][0])->toBe([$app.'/Contents/MacOS/star-gazer', 'phar://'.realpath($app.'/Contents/Resources/star-gazer.phar').'/.venusian-boot-check.php'])
+        ->and($this->boots[0][2])->toBeTrue()
+        ->and($this->boots[0][1]['HOME'])->toStartWith(sys_get_temp_dir())
+        ->and(is_dir($this->boots[0][1]['HOME']))->toBeFalse()
+        ->and($this->lines)->toContain('Starting it once to check it boots');
+});
+
+it('stops before the .dmg when the app does not boot, with what it said', function () {
+    $this->boot = [255, '', "PHP Fatal error:  could not find driver\n"];
+
+    expect(fn () => ($this->build)())->toThrow(RuntimeException::class, "Star Gazer does not start; the built binary, booting the packaged app, said:\nPHP Fatal error:  could not find driver");
+    expect(array_filter($this->mac->commands, fn (array $c): bool => $c[0] === 'hdiutil'))->toBe([]);
 });

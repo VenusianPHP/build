@@ -13,6 +13,8 @@ final readonly class Manifest
      * @param  bool  $windowed  the app has a toolkit (a jovian/* package), so it gets a desktop entry and icon
      * @param  int  $build  build.json build: the .app's CFBundleVersion
      * @param  array<string, string>  $permissions  build.json permissions: permission => the sentence macOS shows when it asks
+     * @param  array{driver: string, database: string}|null  $database  config/database.php's default connection: its driver and database
+     * @param  array<string, list<string>>  $uses  extension => packages whose code calls it; filled by the build's scan
      */
     public function __construct(
         public string $name,
@@ -35,6 +37,8 @@ final readonly class Manifest
         public bool $windowed = false,
         public int $build = 1,
         public array $permissions = [],
+        public ?array $database = null,
+        public array $uses = [],
     ) {}
 
     public static function fromJson(string $json): self
@@ -62,6 +66,8 @@ final readonly class Manifest
             windowed: (bool) ($data['windowed'] ?? false),
             build: (int) ($data['build'] ?? 1),
             permissions: (array) ($data['permissions'] ?? []),
+            database: isset($data['database']) ? (array) $data['database'] : null,
+            uses: (array) ($data['uses'] ?? []),
         );
     }
 
